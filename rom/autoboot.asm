@@ -66,7 +66,7 @@
         DC.L    BOOT_START
         DC.L    BOOT_START
 
-        ORG     $00000080
+        ORG     $00001000
 
 BOOT_START:
         MOVE.L  #$00080000, SP
