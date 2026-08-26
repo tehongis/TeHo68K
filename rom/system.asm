@@ -1,13 +1,15 @@
 ; system.asm - HAL System ROM for 68000 Virtual Computer
 ; Assemble with: vasm68k_mot -Fbin system.asm -o system.bin
-; Load at ROM_BASE (0x00000000)
+; Load at ROM_BASE ($00000000)
 
-        ORG     0x00000000
+        include "HAL.i"   
+
+        ORG     $00000000
 
 ; ===== EXCEPTION VECTOR TABLE =====
-        DC.L    0x00080000      ; 0x00: Initial SSP
-        DC.L    COLD_BOOT       ; 0x04: Reset Vector
-        DC.L    HAL_RESERVED    ; 0x08-0x7C: Exceptions (fill with HAL_RESERVED)
+        DC.L    $00080000      ; $00: Initial SSP
+        DC.L    COLD_BOOT       ; $04: Reset Vector
+        DC.L    HAL_RESERVED    ; $08-$7C: Exceptions (fill with HAL_RESERVED)
         DC.L    HAL_RESERVED
         DC.L    HAL_RESERVED
         DC.L    HAL_RESERVED
@@ -39,28 +41,28 @@
         DC.L    HAL_RESERVED
         DC.L    HAL_RESERVED
 
-; ===== TRAP VECTORS (0x80-0xFC) =====
-        DC.L    HAL_RESERVED    ; 0x80
-        DC.L    HAL_RESERVED    ; 0x84
-        DC.L    HAL_RESERVED    ; 0x88
-        DC.L    HAL_RESERVED    ; 0x8C
-        DC.L    HAL_RESERVED    ; 0x90
-        DC.L    HAL_RESERVED    ; 0x94
-        DC.L    HAL_RESERVED    ; 0x98
-        DC.L    HAL_RESERVED    ; 0x9C
+; ===== TRAP VECTORS ($80-$FC) =====
+        DC.L    HAL_RESERVED    ; $80
+        DC.L    HAL_RESERVED    ; $84
+        DC.L    HAL_RESERVED    ; $88
+        DC.L    HAL_RESERVED    ; $8C
+        DC.L    HAL_RESERVED    ; $90
+        DC.L    HAL_RESERVED    ; $94
+        DC.L    HAL_RESERVED    ; $98
+        DC.L    HAL_RESERVED    ; $9C
 
-; TRAP vectors (offset 0x80-0xFC in vector table)
-        DC.L    0x00040100      ; TRAP #0 → HAL_MEM in RAM
-        DC.L    0x00040110      ; TRAP #1 → HAL_IO in RAM
-        DC.L    0x00040120      ; TRAP #2 → HAL_TIMER in RAM
-        DC.L    0x00040130      ; TRAP #3 → HAL_DATA in RAM
-        DC.L    0x00040140      ; TRAP #4 → HAL_CONTEXT in RAM
-        DC.L    0x00040150      ; TRAP #5 → HAL_SYSTEM in RAM
-        DC.L    0x00040160      ; TRAP #6 → HAL_MOUSE in RAM
-        DC.L    0x00040170      ; TRAP #7 → HAL_FRAMEBUFFER in RAM
-        DC.L    0x00040180      ; TRAP #8 → HAL_BLOCKDEV in RAM   
+; TRAP vectors (offset $80-$FC in vector table)
+        DC.L    $00040100      ; TRAP #0 → HAL_MEM in RAM
+        DC.L    $00040110      ; TRAP #1 → HAL_IO in RAM
+        DC.L    $00040120      ; TRAP #2 → HAL_TIMER in RAM
+        DC.L    $00040130      ; TRAP #3 → HAL_DATA in RAM
+        DC.L    $00040140      ; TRAP #4 → HAL_CONTEXT in RAM
+        DC.L    $00040150      ; TRAP #5 → HAL_SYSTEM in RAM
+        DC.L    $00040160      ; TRAP #6 → HAL_MOUSE in RAM
+        DC.L    $00040170      ; TRAP #7 → HAL_FRAMEBUFFER in RAM
+        DC.L    $00040180      ; TRAP #8 → HAL_BLOCKDEV in RAM   
 
-        DC.L    HAL_RESERVED    ; 0xC4-0xFC: Reserved
+        DC.L    HAL_RESERVED    ; $C4-$FC: Reserved
         DC.L    HAL_RESERVED
         DC.L    HAL_RESERVED
         DC.L    HAL_RESERVED
@@ -69,143 +71,17 @@
         DC.L    HAL_RESERVED
         DC.L    HAL_RESERVED
         DC.L    HAL_RESERVED
-
-; ===== HAL FUNCTION CODES =====
-; TRAP #0 - Memory
-#define HAL_MEM_ALLOC       0x00000001
-#define HAL_MEM_FREE        0x00000002
-#define HAL_MEM_CREATE      0x00000003
-#define HAL_MEM_DESTROY     0x00000004
-#define HAL_MEM_ORGANIZE    0x00000005
-
-; TRAP #1 - I/O
-#define HAL_IO_KBD_READ     0x00000001
-#define HAL_IO_KBD_STATUS   0x00000002
-#define HAL_IO_MOUSE_READ   0x00000003
-#define HAL_IO_MOUSE_STATUS 0x00000004
-#define HAL_IO_AUDIO_INIT   0x00000005
-#define HAL_IO_AUDIO_PLAY   0x00000006
-#define HAL_IO_AUDIO_STOP   0x00000007
-
-; TRAP #2 - Timer
-#define HAL_TIMER_INIT      0x00000001
-#define HAL_TIMER_START     0x00000002
-#define HAL_TIMER_STOP      0x00000003
-#define HAL_TIMER_READ      0x00000004
-#define HAL_TIMER_IRQ_SET   0x00000005
-#define HAL_TIMER_IRQ_CLR   0x00000006
-
-; TRAP #3 - Data
-#define HAL_DATA_READ_MEM   0x00000001
-#define HAL_DATA_WRITE_MEM  0x00000002
-#define HAL_DATA_COPY       0x00000003
-#define HAL_DATA_CONVERT    0x00000004
-
-; TRAP #4 - Context
-#define HAL_CTX_SWITCH      0x00000001
-#define HAL_CTX_SAVE        0x00000002
-#define HAL_CTX_RESTORE     0x00000003
-#define HAL_CTX_CREATE_TASK 0x00000004
-#define HAL_CTX_DELETE_TASK 0x00000005
-
-; TRAP #5 - System
-#define HAL_SYS_RESET       0x00000001
-#define HAL_SYS_POWER_OFF   0x00000002
-#define HAL_SYS_POWER_ON    0x00000003
-#define HAL_SYS_HALT        0x00000004
-
-; TRAP #6 - Mouse/GFX (replaces Radio)
-#define HAL_MOUSE_SET_SHAPE 0x00000001
-#define HAL_MOUSE_SET_HOTSPOT 0x00000002
-#define HAL_MOUSE_SHOW      0x00000003
-#define HAL_MOUSE_HIDE      0x00000004
-#define HAL_MOUSE_WARP      0x00000005
-#define HAL_MOUSE_DRAW_LINE 0x00000006
-#define HAL_MOUSE_DRAW_RECT 0x00000007
-#define HAL_MOUSE_DRAW_COPY 0x00000008
-#define HAL_MOUSE_GET_POS   0x00000009
-#define HAL_MOUSE_SET_SCALE 0x0000000A
-
-; TRAP #7 - Framebuffer
-#define HAL_FB_CLEAR        0x00000001
-#define HAL_FB_SET_COLOR    0x00000002
-#define HAL_FB_PLOT_CHAR    0x00000003
-#define HAL_FB_SET_CURSOR   0x00000004
-#define HAL_FB_SCROLL       0x00000005
-#define HAL_FB_PLOT_PIXEL   0x00000006
-#define HAL_FB_GET_PIXEL    0x00000007
-#define HAL_FB_PLOT_BITMAP  0x00000008
-
-; TRAP #8 - Block Device
-#define HAL_BLK_READ        0x00000001
-#define HAL_BLK_WRITE       0x00000002
-#define HAL_BLK_INIT        0x00000003
-#define HAL_BLK_STATUS      0x00000004
-#define HAL_BLK_SEEK        0x00000005
-
-; ===== MEMORY MAP =====
-#define FB_BASE             0x00C00000
-#define FB_WIDTH            800
-#define FONT_ROM_BASE       0x00FF8000
-#define PALETTE_BASE        0x00FF0100
-#define IO_BASE             0x00FF0000
-#define CONSOLE_DATA        0x00FF0000
-#define CONSOLE_STATUS      0x00FF0001
-#define HDD_CMD_REG         0x00FF0010
-#define HDD_DATA_REG        0x00FF0011
-#define HDD_STATUS_REG      0x00FF0012
-#define HDD_SECTOR_LO       0x00FF0013
-#define HDD_SECTOR_HI       0x00FF0014
-#define MOUSE_X_REG         0x00FF0020
-#define MOUSE_Y_REG         0x00FF0022
-#define MOUSE_BTN_REG       0x00FF0024
-#define AUDIO_RATE_REG      0x00FF0030
-#define AUDIO_CH_REG        0x00FF0032
-#define AUDIO_BUF_REG       0x00FF0034
-#define AUDIO_PLAY_REG      0x00FF0038
-#define TIMER_PERIOD_REG    0x00FF0040
-#define TIMER_COUNT_REG     0x00FF0044
-#define TIMER_EN_REG        0x00FF0048
-#define TIMER_IRQ_REG       0x00FF004C
-#define MOUSE_SHAPE_REG     0x00FF0080
-#define MOUSE_HOT_X_REG     0x00FF0082
-#define MOUSE_HOT_Y_REG     0x00FF0084
-#define MOUSE_VIS_REG       0x00FF0086
-#define MOUSE_SC_X_REG      0x00FF0088
-#define MOUSE_SC_Y_REG      0x00FF008A
-#define GFX_LX1_REG         0x00FF0090
-#define GFX_LY1_REG         0x00FF0092
-#define GFX_LX2_REG         0x00FF0094
-#define GFX_LY2_REG         0x00FF0096
-#define GFX_LC_REG          0x00FF0098
-#define GFX_LT_REG          0x00FF009A
-#define GFX_RX_REG          0x00FF00A0
-#define GFX_RY_REG          0x00FF00A2
-#define GFX_RW_REG          0x00FF00A4
-#define GFX_RH_REG          0x00FF00A6
-#define GFX_RC_REG          0x00FF00A8
-#define GFX_RF_REG          0x00FF00AA
-#define GFX_RT_REG          0x00FF00AC
-#define GFX_BX_REG          0x00FF00B0
-#define GFX_BY_REG          0x00FF00B2
-#define GFX_BDX_REG         0x00FF00B4
-#define GDK_BDY_REG         0x00FF00B6
-#define GFX_BW_REG          0x00FF00B8
-#define GFX_BH_REG          0x00FF00BA
-#define GFX_BT_REG          0x00FF00BC
-#define POWER_REG           0x00FF00F0
-
 
 
 ; ===== COLD BOOT =====
-        ORG     0x00000080
+        ORG     $00000080
 
 COLD_BOOT:
-        MOVE.L  #0x00080000, SP
+        MOVE.L  #$00080000, SP
         
-        ; Copy our vector table (at 0x00040000) to real vector table (0x00000000)
-        LEA     0x00040000, A0         ; Our vector table in RAM
-        LEA     0x00000000, A1         ; Real vector table
+        ; Copy our vector table (at $00040000) to real vector table ($00000000)
+        LEA     $00040000, A0         ; Our vector table in RAM
+        LEA     $00000000, A1         ; Real vector table
         MOVEQ   #0, D0
 VT_COPY:
         MOVE.L  (A0)+, (A1)+
@@ -213,8 +89,8 @@ VT_COPY:
         CMPI    #256, D0               ; 256 bytes = 64 vectors
         BLT     VT_COPY
                 
-        ; Init memory manager (free list at 0x00040000)
-        LEA     0x00040000, A0
+        ; Init memory manager (free list at $00040000)
+        LEA     $00040000, A0
         MOVE.L  #0, (A0)
         
         ; Init timer
@@ -223,36 +99,36 @@ VT_COPY:
         MOVE.B  #0, TIMER_EN_REG
         
         ; Init framebuffer
-        MOVE.W  #800, 0x00FF0002
-        MOVE.W  #600, 0x00FF0004
-        MOVE.B  #8, 0x00FF0006
+        MOVE.W  #800, $00FF0002
+        MOVE.W  #600, $00FF0004
+        MOVE.B  #8, $00FF0006
         
         ; Init palette (grayscale)
         MOVEQ   #0, D0
 PAL_INIT:
-        MOVE.B  D0, PALETTE_BASE(D0*3)
-        MOVE.B  D0, PALETTE_BASE(D0*3+1)
-        MOVE.B  D0, PALETTE_BASE(D0*3+2)
-        ADDQ.L  #1, D0
-        CMPI    #256, D0
+        MOVE.B  D0, PALETTE_BASE(D0)
+        MOVE.B  D0, PALETTE_BASE+1(D0)
+        MOVE.B  D0, PALETTE_BASE+2(D0)
+        ADDQ.L  #3, D0
+        CMPI    #3*256, D0
         BLT     PAL_INIT
         
         ; Init HDD
-        MOVE.B  #0x01, HDD_CMD_REG
+        MOVE.B  #$01, HDD_CMD_REG
 HDD_WAIT:
         BTST    #0, HDD_STATUS_REG
         BEQ     HDD_WAIT
         
         ; Load boot sector 0
         MOVE.W  #0, HDD_SECTOR_LO
-        MOVE.B  #0x20, HDD_CMD_REG
+        MOVE.B  #$20, HDD_CMD_REG
 BOOT_WAIT:
         BTST    #0, HDD_STATUS_REG
         BEQ     BOOT_WAIT
         
         ; Copy to RAM and jump
         LEA     HDD_DATA_REG, A0
-        LEA     0x00040000, A1
+        LEA     $00040000, A1
         MOVEQ   #0, D0
 BOOT_COPY:
         MOVE.B  (A0), (A1)+
@@ -260,7 +136,7 @@ BOOT_COPY:
         CMPI    #512, D0
         BLT     BOOT_COPY
         
-        JMP     0x00040000
+        JMP     $00040000
 
 ; ===== HAL DISPATCHERS =====
 
@@ -280,26 +156,26 @@ HAL_MEM:
 
 MEM_ALLOC:
         ; D1=size, D2=alignment → D0=ptr or -1
-        LEA     0x00040000, A0
+        LEA     $00040000, A0
         MOVE.L  D1, D3
         ADD.L   #8, D3
 MEM_ALOOP:
         MOVE.L  (A0), D4
         BEQ     MEM_AFAIL
-        MOVE.L  (A0)+4, D5
+        MOVE.L  4(a0), d5
         CMP.L   D3, D5
         BCC     MEM_AFAIL
         OR.L    #1, D5
-        MOVE.L  D5, (A0)+4
+        MOVE.L  D5, 4(a0)
         MOVE.L  A0, D0
-        MOVE.L  D4, (A0)-8
+        MOVE.L  D4, (a0)-8
         RTS
 MEM_AFAIL:
         MOVEQ   #-1, D0
         RTS
 
 MEM_FREE:
-        LEA     0x00040000, A0
+        LEA     $00040000, A0
         MOVE.L  D1, (A0)
         RTS
 
@@ -308,9 +184,9 @@ MEM_CREATE:
         BSR     MEM_ALLOC
         MOVE.L  D0, D1
         MOVE.L  D2, D3
-        LEA     D0, A1
+        MOVE.l  D0, A1
 MEM_CLOOP:
-        MOVEQ   #0, (A1)+
+        MOVE    #0, (A1)+
         DBRA    D3, MEM_CLOOP
         MOVE.L  D1, D0
         RTS
@@ -355,7 +231,7 @@ IO_MOUSE_READ:
         RTS
 
 IO_MOUSE_STATUS:
-        MOVE.B  0x00FF0024, D0
+        MOVE.B  $00FF0024, D0
         RTS
 
 IO_AUDIO_INIT:
@@ -536,13 +412,13 @@ HAL_SYSTEM:
         BRA     HAL_INVALID
 
 S_RESET:
-        MOVE.L  #0x00080000, SP
-        LEA     0x00080000, A0
-        MOVE.L  #0x00080000/4, D0
+        MOVE.L  #$00080000, SP
+        LEA     $00080000, A0
+        MOVE.L  #$00080000/4, D0
 S_CLR:
         MOVE.L  #0, (A0)+
         DBRA    D0, S_CLR
-        JMP     0x00000080
+        JMP     $00000080
 
 S_POWEROFF:
         MOVE.B  #1, POWER_REG
@@ -694,9 +570,9 @@ F_SKIP:
         RTS
 
 F_CURSOR:
-        MOVE.W  D1, 0x00FF0070
-        MOVE.W  D2, 0x00FF0072
-        MOVE.B  D3, 0x00FF0074
+        MOVE.W  D1, $00FF0070
+        MOVE.W  D2, $00FF0072
+        MOVE.B  D3, $00FF0074
         RTS
 
 F_SCROLL:
@@ -738,7 +614,7 @@ HAL_BLOCKDEV:
         BRA     HAL_INVALID
 
 B_INIT:
-        MOVE.B  #0x01, HDD_CMD_REG
+        MOVE.B  #$01, HDD_CMD_REG
 B_IWAIT:
         BTST    #0, HDD_STATUS_REG
         BEQ     B_IWAIT
@@ -746,7 +622,7 @@ B_IWAIT:
 
 B_READ:
         MOVE.W  D1, HDD_SECTOR_LO
-        MOVE.B  #0x20, HDD_CMD_REG
+        MOVE.B  #$20, HDD_CMD_REG
 B_RWAIT:
         BTST    #0, HDD_STATUS_REG
         BEQ     B_RWAIT
@@ -770,7 +646,7 @@ B_WCOPY:
         ADDQ.L  #1, D3
         CMPI    #512, D3
         BLT     B_WCOPY
-        MOVE.B  #0x30, HDD_CMD_REG
+        MOVE.B  #$30, HDD_CMD_REG
 B_WWAIT:
         BTST    #0, HDD_STATUS_REG
         BEQ     B_WWAIT
