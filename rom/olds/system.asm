@@ -157,9 +157,9 @@ IO_KBD_STATUS:
         RTS
 
 IO_MOUSE_READ:
-        MOVE.W  MOUSE_X_REG, (D0)
-        MOVE.W  MOUSE_Y_REG, (D0)+2
-        MOVE.B  MOUSE_BTN_REG, (D0)+4
+        MOVE.W  MOUSE_X_REG, D0
+        MOVE.W  MOUSE_Y_REG, D1
+        MOVE.B  MOUSE_BTN_REG, D2
         RTS
 
 IO_MOUSE_STATUS:
@@ -485,18 +485,17 @@ F_PCHAR:
         MULU    #800, D5
         ADD.L   D1, D5
         LEA     FB_BASE, A1
-        ADD.L   D5, A1
-        MOVEQ   #7, D6
+        MOVEQ   #7, D6   ; Row loop counter
 F_PROW:
         MOVE.B  (A0)+, D7
-        MOVEQ   #7, D8
+        MOVEQ   #7, D5   ; Column loop counter (Use D5 instead of D8)
 F_PCOL:
         LSL.B   #1, D7
         BCC     F_SKIP
         MOVE.B  D4, (A1)
 F_SKIP:
         ADDQ.L  #1, A1
-        DBRA    D8, F_PCOL
+        DBRA    D5, F_PCOL ; Use D5
         ADD.L   #792, A1
         DBRA    D6, F_PROW
         RTS

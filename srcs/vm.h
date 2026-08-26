@@ -34,9 +34,6 @@
 #define HDD_CMD_READ    0x20
 #define HDD_CMD_WRITE   0x30
 
-
-// Add to vm.h after existing defines
-
 // Mouse & Graphics Acceleration Registers (TRAP #6)
 #define MOUSE_SHAPE_REG     (IO_BASE + 0x80)
 #define MOUSE_HOTSPOT_X     (IO_BASE + 0x82)
@@ -74,7 +71,7 @@
 #define AUDIO_CHANNELS      (IO_BASE + 0x32)
 #define AUDIO_BUF_ADDR      (IO_BASE + 0x34)
 #define AUDIO_BUF_LEN       (IO_BASE + 0x38)
-#define AUDIO_PLAYING       (IO_BASE + 0x38)  // Reuse
+#define AUDIO_PLAYING       (IO_BASE + 0x38)
 
 // Timer
 #define TIMER_PERIOD        (IO_BASE + 0x40)
@@ -85,24 +82,26 @@
 // System
 #define POWER_REG           (IO_BASE + 0xF0)
 
+// ===== KORJATTU STRUCT (Kaikki tuplat poistettu) =====
 typedef struct {
     uint8_t* rom;
     uint8_t* ram;
     uint8_t* framebuffer;
+    
     uint8_t font_rom[FONT_SIZE];
     uint8_t palette[PALETTE_SIZE];
     uint8_t io_registers[256];
+    
+    char* hdd_path;
+    uint8_t hdd_sector_buf[HDD_SECTOR_SIZE];
+    uint32_t hdd_current_sector;
     
     uint16_t fb_width;
     uint16_t fb_height;
     int fb_dirty;
     int palette_dirty;
-    
-    char* hdd_path;
-    uint8_t hdd_sector_buf[HDD_SECTOR_SIZE];
-    uint32_t hdd_current_sector;
 
-    // New fields for HAL
+    // HAL-kentät
     uint8_t  mouse_shape;
     uint8_t  mouse_visible;
     uint16_t mouse_hotspot_x, mouse_hotspot_y;
@@ -110,10 +109,12 @@ typedef struct {
     uint16_t timer_period;
     uint32_t timer_counter;
     uint8_t  timer_enabled;
+    uint8_t  timer_irq_level;
     uint8_t  audio_playing;
     uint16_t audio_sample_rate;
     uint8_t  audio_channels;
     uint8_t  power_off;
+    int rom_visible_at_low_addr; 
 
 } VirtualMachine;
 
@@ -126,4 +127,4 @@ void vm_write_byte(void* user_data, uint32_t addr, uint8_t value);
 void vm_write_word(void* user_data, uint32_t addr, uint16_t value);
 void vm_write_long(void* user_data, uint32_t addr, uint32_t value);
 
-#endif   
+#endif // VM_H

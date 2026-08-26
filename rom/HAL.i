@@ -117,8 +117,16 @@ GFX_RT_REG          EQU     $00FF00AC
 GFX_BX_REG          EQU     $00FF00B0
 GFX_BY_REG          EQU     $00FF00B2
 GFX_BDX_REG         EQU     $00FF00B4
-GDK_BDY_REG         EQU     $00FF00B6
+GFX_BDY_REG         EQU     $00FF00B6
 GFX_BW_REG          EQU     $00FF00B8
 GFX_BH_REG          EQU     $00FF00BA
 GFX_BT_REG          EQU     $00FF00BC
 POWER_REG           EQU     $00FF00F0
+ROM_BANK_REG        EQU     $00FF0100
+
+; ===== ADDED FOR CRASH HANDLER / FRAMEBUFFER HARDWARE REGISTERS =====
+; Nämä osoitteet on johdettu kernel.asm-tiedostosi COLD_BOOT-osion riveistä 34-36.
+; Niiden lisääminen vakioiksi säästää "magic numbereilta" koodissa.
+FB_RES_X_REG        EQU     $00FF0002   ; Näytön leveysrekisteri (800)
+FB_RES_Y_REG        EQU     $00FF0004   ; Näytön korkeusrekisteri (600)
+FB_DEPTH_REG        EQU     $00FF0006   ; Värisyvyysrekisteri (8)
