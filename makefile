@@ -48,7 +48,7 @@ rom: $(AUTOBOOT_BIN)
 
 $(AUTOBOOT_BIN): $(ROM_DIR)/autoboot.asm
 	@mkdir -p $(ROM_DIR)
-	$(VASM) -Fbin -o $@ $<
+	$(VASM) -spaces -Fbin -o $@ $<
 	@echo "  [ROM] $@ ($(shell stat -c%s $@ 2>/dev/null || wc -c < $@) bytes)"
 
 # --- HDD: System ROM (HAL, loaded from sector 0) ---
@@ -56,7 +56,7 @@ hdd: $(SYSTEM_BIN)
 
 $(SYSTEM_BIN): $(ROM_DIR)/system.asm
 	@mkdir -p $(HDD_DIR)
-	$(VASM) -Fbin -o $@ $<
+	$(VASM) -spaces -Fbin -o $@ $<
 	@echo "  [HDD] $@ ($(shell stat -c%s $@ 2>/dev/null || wc -c < $@) bytes)"
 
 # --- Emulator Binary ---
