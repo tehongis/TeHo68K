@@ -1,0 +1,975 @@
+CALL HAL:
+    MOVE.L  #FUNCTION_CODE, D0
+    TRAP    #N              ; N = 0-8   
+
+
+Vector table
+
+; system.rom - Vector Table & HAL Dispatch
+        ORG     0x00000000
+
+; === EXCEPTION VECTOR TABLE ===
+        DC.L    0x00080000      ; 0x00: Initial SSP (top of RAM)
+        DC.L    COLD_BOOT       ; 0x04: Reset Vector
+        DC.L    HAL_RESERVED    ; 0x08: Bus Error
+        DC.L    HAL_RESERVED    ; 0x0C: Address Error
+        DC.L    HAL_RESERVED    ; 0x10: Illegal Instruction
+        DC.L    HAL_RESERVED    ; 0x14: Divide by Zero
+        DC.L    HAL_RESERVED    ; 0x18: CHK/CHK2
+        DC.L    HAL_RESERVED    ; 0x1C: TRAPV
+        DC.L    HAL_RESERVED    ; 0x20: Privilege Violation
+        DC.L    HAL_RESERVED    ; 0x24: Trace
+        DC.L    HAL_RESERVED    ; 0x28: Line A
+        DC.L    HAL_RESERVED    ; 0x2C: Line F
+        DC.L    HAL_RESERVED    ; 0x30: Unused
+        DC.L    HAL_RESERVED    ; 0x34: Unused
+        DC.L    HAL_RESERVED    ; 0x38: Unused
+        DC.L    HAL_RESERVED    ; 0x3C: Unused
+        DC.L    HAL_RESERVED    ; 0x40: Unused
+        DC.L    HAL_RESERVED    ; 0x44-0x5C: Unused
+        DC.L    HAL_RESERVED    ; 0x5C: Unused
+        DC.L    HAL_RESERVED    ; 0x60: Unused
+        DC.L    HAL_RESERVED    ; 0x64: IRQ Level 1
+        DC.L    HAL_RESERVED    ; 0x68: IRQ Level 2
+        DC.L    HAL_RESERVED    ; 0x6C: IRQ Level 3
+        DC.L    HAL_RESERVED    ; 0x70: IRQ Level 4
+        DC.L    HAL_RESERVED    ; 0x74: IRQ Level 5
+        DC.L    HAL_RESERVED    ; 0x78: IRQ Level 6
+        DC.L    HAL_RESERVED    ; 0x7C: IRQ Level 7 / NMI
+
+; === TRAP VECTORS (0x80-0xFC) ===
+        DC.L    HAL_RESERVED    ; 0x80: Unused
+        DC.L    HAL_RESERVED    ; 0x84: Unused
+        DC.L    HAL_RESERVED    ; 0x88: Unused
+        DC.L    HAL_RESERVED    ; 0x8C: Unused
+        DC.L    HAL_RESERVED    ; 0x90: Unused
+        DC.L    HAL_RESERVED    ; 0x94: Unused
+        DC.L    HAL_RESERVED    ; 0x98: Unused
+        DC.L    HAL_RESERVED    ; 0x9C: Unused
+        DC.L    HAL_MEM         ; 0xA0: TRAP #0 - Memory Management
+        DC.L    HAL_IO          ; 0xA4: TRAP #1 - I/O Operations
+        DC.L    HAL_TIMER       ; 0xA8: TRAP #2 - Timer Management
+        DC.L    HAL_DATA        ; 0xAC: TRAP #3 - Data Handling
+        DC.L    HAL_CONTEXT     ; 0xB0: TRAP #4 - Context Switching
+        DC.L    HAL_SYSTEM      ; 0xB4: TRAP #5 - System Functions
+        DC.L    HAL_RADIO       ; 0xB8: TRAP #6 - Radio Operations
+        DC.L    HAL_FRAMEBUFFER ; 0xBC: TRAP #7 - Framebuffer
+        DC.L    HAL_BLOCKDEV    ; 0xC0: TRAP #8 - Block Device (HDD)
+        DC.L    HAL_RESERVED    ; 0xC4: TRAP #9 - Reserved
+        DC.L    HAL_RESERVED    ; 0xC8: TRAP #10 - Reserved
+        DC.L    HAL_RESERVED    ; 0xCC: TRAP #11 - Reserved
+        DC.L    HAL_RESERVED    ; 0xD0: TRAP #12 - Reserved
+        DC.L    HAL_RESERVED    ; 0xD4: TRAP #13 - Reserved
+        DC.L    HAL_RESERVED    ; 0xD8: TRAP #14 - Reserved
+        DC.L    HAL_RESERVED    ; 0xDC: TRAP #15 - Reserved
+
+; === USER INTERRUPT VECTORS (0x100-0x3FC) ===
+        ; 64-255: User interrupt vectors (reserved for future)
+
+; === HAL FUNCTION CODES ===
+; TRAP #0 - Memory Management
+#define HAL_MEM_ALLOC       0x00000001
+#define HAL_MEM_FREE        0x00000002
+#define HAL_MEM_CREATE      0x00000003
+#define HAL_MEM_DESTROY     0x00000004
+#define HAL_MEM_ORGANIZE    0x00000005
+
+; TRAP #1 - I/O Operations
+#define HAL_IO_KBD_READ     0x00000001
+#define HAL_IO_KBD_STATUS   0x00000002
+#define HAL_IO_MOUSE_READ   0x00000003
+#define HAL_IO_MOUSE_STATUS 0x00000004
+#define HAL_IO_AUDIO_INIT   0x00000005
+#define HAL_IO_AUDIO_PLAY   0x00000006
+#define HAL_IO_AUDIO_STOP   0x00000007
+
+; TRAP #2 - Timer Management
+#define HAL_TIMER_INIT      0x00000001
+#define HAL_TIMER_START     0x00000002
+#define HAL_TIMER_STOP      0x00000003
+#define HAL_TIMER_READ      0x00000004
+#define HAL_TIMER_IRQ_SET   0x00000005
+#define HAL_TIMER_IRQ_CLR   0x00000006
+
+; TRAP #3 - Data Handling
+#define HAL_DATA_READ_MEM   0x00000001
+#define HAL_DATA_WRITE_MEM  0x00000002
+#define HAL_DATA_COPY       0x00000003
+#define HAL_DATA_CONVERT    0x00000004
+
+; TRAP #4 - Context Switching
+#define HAL_CTX_SWITCH      0x00000001
+#define HAL_CTX_SAVE        0x00000002
+#define HAL_CTX_RESTORE     0x00000003
+#define HAL_CTX_CREATE_TASK 0x00000004
+#define HAL_CTX_DELETE_TASK 0x00000005
+
+; TRAP #5 - System Functions
+#define HAL_SYS_RESET       0x00000001
+#define HAL_SYS_POWER_OFF   0x00000002
+#define HAL_SYS_POWER_ON    0x00000003
+#define HAL_SYS_HALT        0x00000004
+
+; TRAP #6 - Mouse Pointer & Graphics Acceleration (Replaces Radio)
+#define HAL_MOUSE_SET_SHAPE     0x00000001  ; Define cursor shape (arrow, hand, etc.)
+#define HAL_MOUSE_SET_HOTSPOT   0x00000002  ; Set hotspot coordinates within cursor
+#define HAL_MOUSE_SHOW          0x00000003  ; Show cursor
+#define HAL_MOUSE_HIDE          0x00000004  ; Hide cursor
+#define HAL_MOUSE_WARP          0x00000005  ; Warp cursor to X,Y
+#define HAL_MOUSE_DRAW_LINE     0x00000006  ; Accelerated line drawing (Bresenham)
+#define HAL_MOUSE_DRAW_RECT     0x00000007  ; Accelerated rectangle fill
+#define HAL_MOUSE_DRAW_COPY     0x00000008  ; BitBLT / Copy rectangular area
+#define HAL_MOUSE_GET_POS       0x00000009  ; Get absolute X,Y, buttons
+#define HAL_MOUSE_SET_SCALE     0x0000000A  ; Set mouse sensitivity/scale   
+
+; TRAP #7 - Framebuffer
+#define HAL_FB_CLEAR        0x00000001
+#define HAL_FB_SET_COLOR    0x00000002
+#define HAL_FB_PLOT_CHAR    0x00000003
+#define HAL_FB_SET_CURSOR   0x00000004
+#define HAL_FB_SCROLL       0x00000005
+#define HAL_FB_PLOT_PIXEL   0x00000006
+#define HAL_FB_GET_PIXEL    0x00000007
+#define HAL_FB_PLOT_BITMAP  0x00000008
+
+; TRAP #8 - Block Device
+#define HAL_BLK_READ        0x00000001
+#define HAL_BLK_WRITE       0x00000002
+#define HAL_BLK_INIT        0x00000003
+#define HAL_BLK_STATUS      0x00000004
+#define HAL_BLK_SEEK        0x00000005   
+
+
+
+HAL_MEM:
+        MOVE.L  D0, D1          ; Save function code
+        CMP.L   #HAL_MEM_ALLOC, D1
+        BEQ     MEM_ALLOC
+        CMP.L   #HAL_MEM_FREE, D1
+        BEQ     MEM_FREE
+        CMP.L   #HAL_MEM_CREATE, D1
+        BEQ     MEM_CREATE
+        CMP.L   #HAL_MEM_DESTROY, D1
+        BEQ     MEM_DESTROY
+        CMP.L   #HAL_MEM_ORGANIZE, D1
+        BEQ     MEM_ORGANIZE
+        BRA     HAL_INVALID
+
+MEM_ALLOC:
+        ; D1 = size (bytes), D2 = alignment
+        ; Returns: D0 = pointer or -1 if failed
+        ; Uses free list in RAM at 0x00040000
+        LEA     0x00040000, A0  ; Free list head
+        MOVE.L  D1, D3          ; Size to allocate
+        ADD.L   #8, D3          ; + 8 bytes header
+MEM_ALLOC_LOOP:
+        MOVE.L  (A0), D4        ; Next block
+        BEQ     MEM_ALLOC_FAIL  ; End of list
+        MOVE.L  (A0)+4, D5      ; Block size
+        CMP.L   D3, D5
+        BCC     MEM_ALLOC_FAIL  ; Block too small
+        ; Mark as allocated (flip bit 0 of size)
+        OR.L    #1, D5
+        MOVE.L  D5, (A0)+4
+        ; Return pointer to block start
+        MOVE.L  A0, D0
+        ; Update free list if needed
+        MOVE.L  D4, (A0)-8      ; Fix up if split
+        RTS
+MEM_ALLOC_FAIL:
+        MOVEQ   #-1, D0
+        RTS
+
+MEM_FREE:
+        ; D1 = pointer to free
+        ; Add back to free list
+        LEA     0x00040000, A0
+        MOVE.L  D1, (A0)        ; Insert at head (simple)
+        RTS
+
+MEM_CREATE:
+        ; D1 = name pointer, D2 = size
+        ; Allocate and initialize
+        MOVE.L  D2, D1          ; Reuse size
+        BSR     MEM_ALLOC
+        MOVE.L  D0, D1          ; Save pointer
+        ; Zero out memory
+        MOVE.L  D2, D3
+        LEA     D0, A1
+MEM_CREATE_LOOP:
+        MOVEQ   #0, (A1)+
+        DBRA    D3, MEM_CREATE_LOOP
+        MOVE.L  D1, D0
+        RTS
+
+MEM_DESTROY:
+        ; D1 = pointer
+        BSR     MEM_FREE
+        RTS
+
+MEM_ORGANIZE:
+        ; Compact free list (coalesce adjacent blocks)
+        LEA     0x00040000, A0
+        ; Walk list and merge
+        ; (Implementation depends on free list structure)
+        RTS   
+
+
+HAL_IO:
+        MOVE.L  D0, D1
+        CMP.L   #HAL_IO_KBD_READ, D1
+        BEQ     IO_KBD_READ
+        CMP.L   #HAL_IO_KBD_STATUS, D1
+        BEQ     IO_KBD_STATUS
+        CMP.L   #HAL_IO_MOUSE_READ, D1
+        BEQ     IO_MOUSE_READ
+        CMP.L   #HAL_IO_MOUSE_STATUS, D1
+        BEQ     IO_MOUSE_STATUS
+        CMP.L   #HAL_IO_AUDIO_INIT, D1
+        BEQ     IO_AUDIO_INIT
+        CMP.L   #HAL_IO_AUDIO_PLAY, D1
+        BEQ     IO_AUDIO_PLAY
+        CMP.L   #HAL_IO_AUDIO_STOP, D1
+        BEQ     IO_AUDIO_STOP
+        BRA     HAL_INVALID
+
+IO_KBD_READ:
+        ; Returns: D0 = character or 0 if no input
+        MOVE.B  0x00FF0000, D0  ; Read console data register
+        RTS
+
+IO_KBD_STATUS:
+        ; Returns: D0 = 1 if key available, 0 if not
+        MOVE.B  0x00FF0001, D0  ; Read console status
+        RTS
+
+IO_MOUSE_READ:
+        ; D0 = pointer to mouse struct {x, y, buttons}
+        LEA     0x00FF0020, A0  ; Mouse registers
+        MOVE.W  (A0), D1        ; X position
+        MOVE.W  (A0)+2, D2      ; Y position
+        MOVE.B  (A0)+4, D3      ; Buttons
+        MOVE.W  D1, (D0)        ; Store to user buffer
+        MOVE.W  D2, (D0)+2
+        MOVE.B  D3, (D0)+4
+        RTS
+
+IO_MOUSE_STATUS:
+        ; Returns: D0 = 1 if movement detected
+        MOVE.B  0x00FF0024, D0
+        RTS
+
+IO_AUDIO_INIT:
+        ; D1 = sample rate, D2 = channels
+        MOVE.W  D1, 0x00FF0030  ; Audio control register
+        MOVE.B  D2, 0x00FF0032
+        RTS
+
+IO_AUDIO_PLAY:
+        ; D1 = buffer pointer, D2 = length
+        LEA     0x00FF0034, A0  ; Audio DMA buffer address
+        MOVE.L  D1, (A0)
+        MOVE.L  D2, (A0)+4
+        MOVE.B  #1, 0x00FF0038  ; Start DMA
+        RTS
+
+IO_AUDIO_STOP:
+        MOVE.B  #0, 0x00FF0038  ; Stop DMA
+        RTS   
+
+
+HAL_TIMER:
+        MOVE.L  D0, D1
+        CMP.L   #HAL_TIMER_INIT, D1
+        BEQ     TIMER_INIT
+        CMP.L   #HAL_TIMER_START, D1
+        BEQ     TIMER_START
+        CMP.L   #HAL_TIMER_STOP, D1
+        BEQ     TIMER_STOP
+        CMP.L   #HAL_TIMER_READ, D1
+        BEQ     TIMER_READ
+        CMP.L   #HAL_TIMER_IRQ_SET, D1
+        BEQ     TIMER_IRQ_SET
+        CMP.L   #HAL_TIMER_IRQ_CLR, D1
+        BEQ     TIMER_IRQ_CLR
+        BRA     HAL_INVALID
+
+TIMER_INIT:
+        ; D1 = period (in CPU cycles)
+        MOVE.L  D1, 0x00FF0040  ; Timer period register
+        MOVE.L  #0, 0x00FF0044  ; Reset counter
+        RTS
+
+TIMER_START:
+        MOVE.B  #1, 0x00FF0048  ; Enable timer
+        RTS
+
+TIMER_STOP:
+        MOVE.B  #0, 0x00FF0048  ; Disable timer
+        RTS
+
+TIMER_READ:
+        ; Returns: D0 = elapsed cycles
+        MOVE.L  0x00FF0044, D0
+        RTS
+
+TIMER_IRQ_SET:
+        ; D1 = interrupt level (1-7)
+        MOVE.B  D1, 0x00FF004C  ; Set IRQ level
+        RTS
+
+TIMER_IRQ_CLR:
+        MOVE.B  #0, 0x00FF004C
+        RTS   
+
+
+
+HAL_DATA:
+        MOVE.L  D0, D1
+        CMP.L   #HAL_DATA_READ_MEM, D1
+        BEQ     DATA_READ
+        CMP.L   #HAL_DATA_WRITE_MEM, D1
+        BEQ     DATA_WRITE
+        CMP.L   #HAL_DATA_COPY, D1
+        BEQ     DATA_COPY
+        CMP.L   #HAL_DATA_CONVERT, D1
+        BEQ     DATA_CONVERT
+        BRA     HAL_INVALID
+
+DATA_READ:
+        ; D1 = source address, D2 = dest buffer, D3 = length
+        MOVE.L  D1, A0
+        MOVE.L  D2, A1
+        MOVE.L  D3, D4
+DATA_READ_LOOP:
+        MOVE.B  (A0)+, (A1)+
+        DBRA    D4, DATA_READ_LOOP
+        RTS
+
+DATA_WRITE:
+        ; D1 = source buffer, D2 = dest address, D3 = length
+        MOVE.L  D1, A0
+        MOVE.L  D2, A1
+        MOVE.L  D3, D4
+DATA_WRITE_LOOP:
+        MOVE.B  (A0)+, (A1)+
+        DBRA    D4, DATA_WRITE_LOOP
+        RTS
+
+DATA_COPY:
+        ; D1 = src, D2 = dst, D3 = length
+        ; Handles overlapping memory (forward or backward copy)
+        MOVE.L  D1, A0
+        MOVE.L  D2, A1
+        MOVE.L  D3, D4
+        CMP.L   A0, A1
+        BCS     DATA_COPY_FWD   ; dst < src, copy forward
+        ; Copy backward
+DATA_COPY_BWD:
+        ADD.L   D3, A0
+        ADD.L   D3, A1
+DATA_COPY_BWD_LOOP:
+        MOVE.B  -(A0), -(A1)
+        DBRA    D4, DATA_COPY_BWD_LOOP
+        RTS
+DATA_COPY_FWD:
+DATA_COPY_FWD_LOOP:
+        MOVE.B  (A0)+, (A1)+
+        DBRA    D4, DATA_COPY_FWD_LOOP
+        RTS
+
+DATA_CONVERT:
+        ; D1 = src, D2 = dst, D3 = length, D4 = conversion type
+        ; 0 = ASCII to BCD, 1 = BCD to ASCII, 2 = Hex to BCD
+        ; (Implement as needed)
+        RTS   
+
+
+
+HAL_CONTEXT:
+        MOVE.L  D0, D1
+        CMP.L   #HAL_CTX_SWITCH, D1
+        BEQ     CTX_SWITCH
+        CMP.L   #HAL_CTX_SAVE, D1
+        BEQ     CTX_SAVE
+        CMP.L   #HAL_CTX_RESTORE, D1
+        BEQ     CTX_RESTORE
+        CMP.L   #HAL_CTX_CREATE_TASK, D1
+        BEQ     CTX_CREATE
+        CMP.L   #HAL_CTX_DELETE_TASK, D1
+        BEQ     CTX_DELETE
+        BRA     HAL_INVALID
+
+; Context structure (28 bytes):
+;   0: A0  4: A1  8: A2  12: A3  16: A4  20: A5  24: A6
+;   28: D0  32: D1  36: D2  40: D3  44: D4  48: D5  52: D6  56: D7
+;   60: SR  64: PC  68: SP
+
+CTX_SAVE:
+        ; D1 = pointer to context struct
+        MOVE.L  A0, (D1)
+        MOVE.L  A1, (D1)+4
+        MOVE.L  A2, (D1)+8
+        MOVE.L  A3, (D1)+12
+        MOVE.L  A4, (D1)+16
+        MOVE.L  A5, (D1)+20
+        MOVE.L  A6, (D1)+24
+        MOVE.L  D0, (D1)+28
+        MOVE.L  D2, (D1)+32
+        MOVE.L  D3, (D1)+36
+        MOVE.L  D4, (D1)+40
+        MOVE.L  D5, (D1)+44
+        MOVE.L  D6, (D1)+48
+        MOVE.L  D7, (D1)+52
+        MOVE    SR, (D1)+56
+        MOVE.L  PC, (D1)+58
+        RTS
+
+CTX_RESTORE:
+        ; D1 = pointer to context struct
+        MOVE.L  (D1), A0
+        MOVE.L  (D1)+4, A1
+        MOVE.L  (D1)+8, A2
+        MOVE.L  (D1)+12, A3
+        MOVE.L  (D1)+16, A4
+        MOVE.L  (D1)+20, A5
+        MOVE.L  (D1)+24, A6
+        MOVE.L  (D1)+28, D0
+        MOVE.L  (D1)+32, D2
+        MOVE.L  (D1)+36, D3
+        MOVE.L  (D1)+40, D4
+        MOVE.L  (D1)+44, D5
+        MOVE.L  (D1)+48, D6
+        MOVE.L  (D1)+52, D7
+        MOVE    (D1)+56, SR
+        JMP     (D1)+58        ; Jump to saved PC
+
+CTX_SWITCH:
+        ; D1 = current context, D2 = next context
+        BSR     CTX_SAVE
+        MOVE.L  D2, D1
+        BSR     CTX_RESTORE
+        RTS
+
+CTX_CREATE:
+        ; D1 = entry point, D2 = stack pointer
+        ; Allocate context from memory pool
+        RTS
+
+CTX_DELETE:
+        ; D1 = context pointer
+        ; Free context
+        RTS   
+
+
+
+HAL_SYSTEM:
+        MOVE.L  D0, D1
+        CMP.L   #HAL_SYS_RESET, D1
+        BEQ     SYS_RESET
+        CMP.L   #HAL_SYS_POWER_OFF, D1
+        BEQ     SYS_POWER_OFF
+        CMP.L   #HAL_SYS_POWER_ON, D1
+        BEQ     SYS_POWER_ON
+        CMP.L   #HAL_SYS_HALT, D1
+        BEQ     SYS_HALT
+        BRA     HAL_INVALID
+
+SYS_RESET:
+        ; Perform warm reset: clear RAM, reload ROM vectors
+        MOVE.L  #0x00080000, SP
+        ; Clear RAM
+        LEA     0x00080000, A0
+        MOVE.L  #0x00080000/4, D0
+SYS_CLEAR_LOOP:
+        MOVE.L  #0, (A0)+
+        DBRA    D0, SYS_CLEAR_LOOP
+        ; Jump to ROM entry
+        JMP     0x00000080
+
+SYS_POWER_OFF:
+        ; Set power-off flag (emulator checks this)
+        MOVE.B  #1, 0x00FF00F0
+        RTS
+
+SYS_POWER_ON:
+        ; Clear power-off flag
+        MOVE.B  #0, 0x00FF00F0
+        RTS
+
+SYS_HALT:
+        ; Halt CPU (emulator stops)
+        STOP    #$2700   
+
+
+
+HAL_MOUSE:        ; New name for TRAP #6 handler
+        MOVE.L  D0, D1
+        CMP.L   #HAL_MOUSE_SET_SHAPE, D1
+        BEQ     MOUSE_SET_SHAPE
+        CMP.L   #HAL_MOUSE_SET_HOTSPOT, D1
+        BEQ     MOUSE_SET_HOTSPOT
+        CMP.L   #HAL_MOUSE_SHOW, D1
+        BEQ     MOUSE_SHOW
+        CMP.L   #HAL_MOUSE_HIDE, D1
+        BEQ     MOUSE_HIDE
+        CMP.L   #HAL_MOUSE_WARP, D1
+        BEQ     MOUSE_WARP
+        CMP.L   #HAL_MOUSE_DRAW_LINE, D1
+        BEQ     MOUSE_DRAW_LINE
+        CMP.L   #HAL_MOUSE_DRAW_RECT, D1
+        BEQ     MOUSE_DRAW_RECT
+        CMP.L   #HAL_MOUSE_DRAW_COPY, D1
+        BEQ     MOUSE_DRAW_COPY
+        CMP.L   #HAL_MOUSE_GET_POS, D1
+        BEQ     MOUSE_GET_POS
+        CMP.L   #HAL_MOUSE_SET_SCALE, D1
+        BEQ     MOUSE_SET_SCALE
+        BRA     HAL_INVALID
+
+; --- Implementation Stubs ---
+
+MOUSE_SET_SHAPE:
+        ; D1 = Shape ID (0=Arrow, 1=IBeam, 2=Hand, 3=Crosshair)
+        ; D2 = Bitmap pointer (optional custom cursor)
+        MOVE.B  D1, 0x00FF0080      ; Cursor Shape Register
+        RTS
+
+MOUSE_SET_HOTSPOT:
+        ; D1 = Hotspot X, D2 = Hotspot Y
+        MOVE.W  D1, 0x00FF0082      ; Hotspot X
+        MOVE.W  D2, 0x00FF0084      ; Hotspot Y
+        RTS
+
+MOUSE_SHOW:
+        MOVE.B  #1, 0x00FF0086      ; Cursor Visible Flag
+        RTS
+
+MOUSE_HIDE:
+        MOVE.B  #0, 0x00FF0086
+        RTS
+
+MOUSE_WARP:
+        ; D1 = X, D2 = Y
+        MOVE.W  D1, 0x00FF0020      ; Force Mouse X Register
+        MOVE.W  D2, 0x00FF0022      ; Force Mouse Y Register
+        RTS
+
+MOUSE_DRAW_LINE:
+        ; D1 = X1, D2 = Y1, D3 = X2, D4 = Y2, D5 = Color
+        ; Host performs accelerated line draw to avoid CPU loop
+        MOVE.W  D1, 0x00FF0090      ; Line X1
+        MOVE.W  D2, 0x00FF0092      ; Line Y1
+        MOVE.W  D3, 0x00FF0094      ; Line X2
+        MOVE.W  D4, 0x00FF0096      ; Line Y2
+        MOVE.B  D5, 0x00FF0098      ; Line Color
+        MOVE.B  #1, 0x00FF009A      ; Trigger Draw
+        RTS
+
+MOUSE_DRAW_RECT:
+        ; D1 = X, D2 = Y, D3 = W, D4 = H, D5 = Color, D6 = Fill (0/1)
+        MOVE.W  D1, 0x00FF00A0
+        MOVE.W  D2, 0x00FF00A2
+        MOVE.W  D3, 0x00FF00A4
+        MOVE.W  D4, 0x00FF00A6
+        MOVE.B  D5, 0x00FF00A8
+        MOVE.B  D6, 0x00FF00AA
+        MOVE.B  #1, 0x00FF00AC      ; Trigger Draw
+        RTS
+
+MOUSE_DRAW_COPY:
+        ; D1 = Src X, D2 = Src Y, D3 = Dst X, D4 = Dst Y, D5 = W, D6 = H
+        ; BitBLT operation
+        MOVE.W  D1, 0x00FF00B0
+        MOVE.W  D2, 0x00FF00B2
+        MOVE.W  D3, 0x00FF00B4
+        MOVE.W  D4, 0x00FF00B6
+        MOVE.W  D5, 0x00FF00B8
+        MOVE.W  D6, 0x00FF00BA
+        MOVE.B  #1, 0x00FF00BC      ; Trigger BitBLT
+        RTS
+
+MOUSE_GET_POS:
+        ; Returns: D0 = X, D1 = Y, D2 = Buttons
+        ; Reads from hardware registers updated by host
+        MOVE.W  0x00FF0020, D0
+        MOVE.W  0x00FF0022, D1
+        MOVE.B  0x00FF0024, D2
+        RTS
+
+MOUSE_SET_SCALE:
+        ; D1 = X Scale, D2 = Y Scale (fixed point or multiplier)
+        MOVE.W  D1, 0x00FF0088
+        MOVE.W  D2, 0x00FF008A
+        RTS   
+
+
+
+HAL_FRAMEBUFFER:
+        MOVE.L  D0, D1
+        CMP.L   #HAL_FB_CLEAR, D1
+        BEQ     FB_CLEAR
+        CMP.L   #HAL_FB_SET_COLOR, D1
+        BEQ     FB_SET_COLOR
+        CMP.L   #HAL_FB_PLOT_CHAR, D1
+        BEQ     FB_PLOT_CHAR
+        CMP.L   #HAL_FB_SET_CURSOR, D1
+        BEQ     FB_SET_CURSOR
+        CMP.L   #HAL_FB_SCROLL, D1
+        BEQ     FB_SCROLL
+        CMP.L   #HAL_FB_PLOT_PIXEL, D1
+        BEQ     FB_PLOT_PIXEL
+        CMP.L   #HAL_FB_GET_PIXEL, D1
+        BEQ     FB_GET_PIXEL
+        CMP.L   #HAL_FB_PLOT_BITMAP, D1
+        BEQ     FB_PLOT_BITMAP
+        BRA     HAL_INVALID
+
+FB_CLEAR:
+        ; D1 = color index (0-255)
+        LEA     0x00C00000, A0
+        MOVE.L  #480000, D2
+FB_CLEAR_LOOP:
+        MOVE.B  D1, (A0)+
+        DBRA    D2, FB_CLEAR_LOOP
+        RTS
+
+FB_SET_COLOR:
+        ; D1 = palette index (0-255)
+        ; D2 = R, D3 = G, D4 = B
+        LEA     0x00FF0100, A0
+        ADD.L   D1, A0
+        ADD.L   D1, A0
+        ADD.L   D1, A0
+        MOVE.B  D2, (A0)+
+        MOVE.B  D3, (A0)+
+        MOVE.B  D4, (A0)
+        RTS
+
+FB_PLOT_CHAR:
+        ; D1 = X, D2 = Y, D3 = char code, D4 = color
+        ; Calculate font offset
+        MOVE.L  D3, D5
+        LSL.L   #3, D5
+        LEA     0x00FF8000, A0
+        ADD.L   D5, A0
+        ; Calculate framebuffer offset
+        MOVE.L  D2, D5
+        MULU    #800, D5
+        ADD.L   D1, D5
+        LEA     0x00C00000, A1
+        ADD.L   D5, A1
+        ; Plot 8 rows
+        MOVEQ   #7, D6
+FB_PLOT_ROW:
+        MOVE.B  (A0)+, D7
+        MOVEQ   #7, D8
+FB_PLOT_COL:
+        LSL.B   #1, D7
+        BCC     FB_SKIP_PIX
+        MOVE.B  D4, (A1)
+FB_SKIP_PIX:
+        ADDQ.L  #1, A1
+        DBRA    D8, FB_PLOT_COL
+        ADD.L   #792, A1
+        DBRA    D6, FB_PLOT_ROW
+        RTS
+
+FB_SET_CURSOR:
+        ; D1 = X, D2 = Y, D3 = visible (0/1)
+        MOVE.W  D1, 0x00FF0070  ; Cursor X
+        MOVE.W  D2, 0x00FF0072  ; Cursor Y
+        MOVE.B  D3, 0x00FF0074  ; Cursor visible
+        RTS
+
+FB_SCROLL:
+        ; D1 = lines to scroll (positive = up, negative = down)
+        ; D2 = color to fill
+        ; Copy framebuffer up/down
+        RTS
+
+FB_PLOT_PIXEL:
+        ; D1 = X, D2 = Y, D3 = color
+        MOVE.L  D2, D4
+        MULU    #800, D4
+        ADD.L   D1, D4
+        LEA     0x00C00000, A0
+        ADD.L   D4, A0
+        MOVE.B  D3, (A0)
+        RTS
+
+FB_GET_PIXEL:
+        ; D1 = X, D2 = Y
+        ; Returns: D0 = color
+        MOVE.L  D2, D3
+        MULU    #800, D3
+        ADD.L   D1, D3
+        LEA     0x00C00000, A0
+        ADD.L   D3, A0
+        MOVE.B  (A0), D0
+        RTS
+
+FB_PLOT_BITMAP:
+        ; D1 = X, D2 = Y, D3 = bitmap pointer, D4 = width, D5 = height
+        ; Plot bitmap to framebuffer
+        RTS   
+
+
+
+
+HAL_BLOCKDEV:
+        MOVE.L  D0, D1
+        CMP.L   #HAL_BLK_READ, D1
+        BEQ     BLK_READ
+        CMP.L   #HAL_BLK_WRITE, D1
+        BEQ     BLK_WRITE
+        CMP.L   #HAL_BLK_INIT, D1
+        BEQ     BLK_INIT
+        CMP.L   #HAL_BLK_STATUS, D1
+        BEQ     BLK_STATUS
+        CMP.L   #HAL_BLK_SEEK, D1
+        BEQ     BLK_SEEK
+        BRA     HAL_INVALID
+
+BLK_INIT:
+        MOVE.B  #0x01, 0x00FF0010  ; HDD_CMD_INIT
+BLK_INIT_WAIT:
+        BTST    #0, 0x00FF0012
+        BEQ     BLK_INIT_WAIT
+        RTS
+
+BLK_READ:
+        ; D1 = sector number, D2 = buffer pointer
+        MOVE.W  D1, 0x00FF0013  ; Sector number
+        MOVE.B  #0x20, 0x00FF0010  ; HDD_CMD_READ
+BLK_READ_WAIT:
+        BTST    #0, 0x00FF0012
+        BEQ     BLK_READ_WAIT
+        ; Copy sector buffer to user buffer
+        LEA     0x00FF0011, A0
+        MOVE.L  D2, A1
+        MOVEQ   #0, D3
+BLK_READ_COPY:
+        MOVE.B  (A0), (A1)+
+        ADDQ.L  #1, D3
+        CMPI    #512, D3
+        BLT     BLK_READ_COPY
+        RTS
+
+BLK_WRITE:
+        ; D1 = sector number, D2 = buffer pointer
+      
+
+
+
+
+HAL_INVALID:
+        ; Invalid function code - set D0 = -1 and return
+        MOVEQ   #-1, D0
+        RTS
+
+HAL_RESERVED:
+        ; Reserved vector - halt
+        STOP    #$2700   
+
+
+
+
+
+
+COLD_BOOT:
+        ; Initialize stack pointer
+        MOVE.L  #0x00080000, SP
+        
+        ; Initialize HAL subsystems
+        ; 1. Memory manager
+        LEA     0x00040000, A0
+        MOVE.L  #0, (A0)          ; Free list head = NULL
+        MOVE.L  #0, (A0)+4        ; No blocks yet
+        
+        ; 2. Timer
+        MOVE.L  #0, 0x00FF0040    ; Timer period
+        MOVE.L  #0, 0x00FF0044    ; Timer counter
+        MOVE.B  #0, 0x00FF0048    ; Timer disabled
+        
+        ; 3. Framebuffer
+        MOVE.W  #800, 0x00FF0002  ; Width
+        MOVE.W  #600, 0x00FF0004  ; Height
+        MOVE.B  #8, 0x00FF0006    ; BPP
+        
+        ; 4. Initialize palette to grayscale
+        MOVEQ   #0, D0
+PALETTE_INIT:
+        MOVE.B  D0, 0x00FF0100(D0*3)
+        MOVE.B  D0, 0x00FF0100(D0*3+1)
+        MOVE.B  D0, 0x00FF0100(D0*3+2)
+        ADDQ.L  #1, D0
+        CMPI    #256, D0
+        BLT     PALETTE_INIT
+        
+        ; 5. Initialize HDD
+        MOVE.B  #0x01, 0x00FF0010
+HDD_BOOT_WAIT:
+        BTST    #0, 0x00FF0012
+        BEQ     HDD_BOOT_WAIT
+        
+        ; 6. Load boot sector from HDD
+        MOVE.W  #0, 0x00FF0013
+        MOVE.B  #0x20, 0x00FF0010
+BOOT_READ_WAIT:
+        BTST    #0, 0x00FF0012
+        BEQ     BOOT_READ_WAIT
+        
+        ; 7. Copy boot sector to RAM and jump
+        LEA     0x00FF0011, A0
+        LEA     0x00040000, A1
+        MOVEQ   #0, D0
+BOOT_COPY_LOOP:
+        MOVE.B  (A0), (A1)+
+        ADDQ.L  #1, D0
+        CMPI    #512, D0
+        BLT     BOOT_COPY_LOOP
+        
+        ; 8. Jump to boot code
+        JMP     0x00040000   
+
+
+-----
+
+host side
+
+// In vm_write_byte, add these register handlers:
+
+// Mouse registers (0x00FF0020-0x00FF0024)
+if (addr >= 0x00FF0020 && addr < 0x00FF0025) {
+    // Mouse is typically read-only from 68000 side
+    // Host updates these via SDL events
+    return;
+}
+
+// Audio registers (0x00FF0030-0x00FF0038)
+if (addr >= 0x00FF0030 && addr < 0x00FF0039) {
+    switch (addr - IO_BASE) {
+        case 0x30: vm->audio_sample_rate = value; break;
+        case 0x32: vm->audio_channels = value; break;
+        case 0x38: vm->audio_playing = value; break;
+    }
+    return;
+}
+
+// Timer registers (0x00FF0040-0x00FF004C)
+if (addr >= 0x00FF0040 && addr < 0x00FF004D) {
+    switch (addr - IO_BASE) {
+        case 0x40: vm->timer_period = value; break;
+        case 0x48: vm->timer_enabled = value; break;
+        case 0x4C: vm->timer_irq_level = value; break;
+    }
+    return;
+}
+
+// Radio registers (0x00FF0050-0x00FF0060)
+if (addr >= 0x00FF0050 && addr < 0x00FF0061) {
+    // Radio I/O handled by host
+    return;
+}
+
+// Cursor registers (0x00FF0070-0x00FF0074)
+if (addr >= 0x00FF0070 && addr < 0x00FF0075) {
+    switch (addr - IO_BASE) {
+        case 0x70: vm->cursor_x = value; break;
+        case 0x72: vm->cursor_y = value; break;
+        case 0x74: vm->cursor_visible = value; break;
+    }
+    return;
+}
+
+// Power register (0x00FF00F0)
+if (addr == 0x00FF00F0) {
+    vm->power_off = value;
+    return;
+}   
+
+
+
+
+
+
+-------------- Mouse changes
+
+// New I/O Registers for Mouse & Graphics Acceleration
+#define MOUSE_SHAPE_REG     (IO_BASE + 0x80)   // 0x00FF0080
+#define MOUSE_HOTSPOT_X     (IO_BASE + 0x82)
+#define MOUSE_HOTSPOT_Y     (IO_BASE + 0x84)
+#define MOUSE_VISIBLE_FLAG  (IO_BASE + 0x86)
+#define MOUSE_SCALE_X       (IO_BASE + 0x88)
+#define MOUSE_SCALE_Y       (IO_BASE + 0x8A)
+
+// Graphics Acceleration Registers
+#define GFX_LINE_X1         (IO_BASE + 0x90)
+#define GFX_LINE_Y1         (IO_BASE + 0x92)
+#define GFX_LINE_X2         (IO_BASE + 0x94)
+#define GFX_LINE_Y2         (IO_BASE + 0x96)
+#define GFX_LINE_COLOR      (IO_BASE + 0x98)
+#define GFX_LINE_TRIGGER    (IO_BASE + 0x9A)
+
+#define GFX_RECT_X          (IO_BASE + 0xA0)
+// ... (similar for Rect and BitBLT registers)   
+
+--- hostside for mouse
+
+// In vm_write_byte or a dedicated gfx_update() function
+
+case 0x80: // Mouse Shape
+    vm->mouse_shape = value;
+    update_sdl_cursor(vm); // Switch between Arrow, IBeam, etc.
+    break;
+
+case 0x86: // Mouse Visible
+    SDL_ShowCursor(value ? SDL_ENABLE : SDL_DISABLE);
+    break;
+
+case 0x9A: // Line Draw Trigger
+    if (value == 1) {
+        // Read coordinates from registers
+        int x1 = (vm->io_registers[0x90-IO_BASE] << 8) | vm->io_registers[0x91-IO_BASE];
+        int y1 = (vm->io_registers[0x92-IO_BASE] << 8) | vm->io_registers[0x93-IO_BASE];
+        int x2 = (vm->io_registers[0x94-IO_BASE] << 8) | vm->io_registers[0x95-IO_BASE];
+        int y2 = (vm->io_registers[0x96-IO_BASE] << 8) | vm->io_registers[0x97-IO_BASE];
+        uint8_t color = vm->io_registers[0x98-IO_BASE];
+        
+        // Use SDL_RenderDrawLine for hardware acceleration
+        SDL_SetRenderDrawColor(renderer, color, color, color, 255);
+        SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
+        vm->fb_dirty = 1;
+    }
+    break;
+
+case 0xAC: // Rect Draw Trigger
+    // Similar implementation for SDL_RenderFillRect
+    break;
+
+case 0xBC: // BitBLT Trigger
+    // Implement SDL_RenderCopy for area copy
+    break;   
+
+--
+
+
+
+
+
+Key Design Decisions
+TRAP	Category	Function Codes	Registers Used
+#0	Memory	5	D0-D2
+#1	I/O	7	D0-D2
+#2	Timer	6	D0-D1
+#3	Data	4	D0-D4
+#4	Context	5	D0-D1
+#5	System	4	D0-D1
+#6	Radio	5	D0-D2
+#7	Framebuffer	8	D0-D5
+#8	Block Dev	5	D0-D2
+
+Total: 53 HAL functions across 9 TRAP vectors, leaving TRAP #9–#15 reserved for future expansion.
+
+This system.rom gives your 68000 virtual computer a complete HAL layer that BASIC (or any other language) can call via TRAP #N with function codes in D0, following the standard 68000 system call convention. 

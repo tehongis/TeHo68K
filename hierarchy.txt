@@ -1,0 +1,46 @@
+m68k_virtual_computer/
+├── src/
+│   ├── main.c              # Main entry point & emulation loop
+│   ├── vm.h                # Virtual Machine structure & constants
+│   ├── vm.c                # Memory bus, HDD, I/O handlers
+│   ├── display.c           # SDL2 framebuffer & palette
+│   ├── display.h
+│   └── font.h              # 8x8 font ROM data
+├── rom/
+│   ├── autoboot.bin        # Bootstrap code (assembled)
+│   └── basic.bin           # Optional Tiny BASIC interpreter
+├── HDD/                    # Virtual hard disk folder
+│   ├── sector_0000.bin     # Boot shell
+│   └── sector_0001.bin     # User programs
+├── include/                # Rocket 68 headers (from submodule)
+├── Makefile
+└── README.md   
+
+
+
+
+
+
+Quick Reference: TRAP Vector Addresses
+TRAP #	Vector Address	Handler
+0	0x000000A0	HAL_MEM
+1	0x000000A4	HAL_IO
+2	0x000000A8	HAL_TIMER
+3	0x000000AC	HAL_DATA
+4	0x000000B0	HAL_CONTEXT
+5	0x000000B4	HAL_SYSTEM
+6	0x000000B8	HAL_MOUSE (replaces Radio)
+7	0x000000BC	HAL_FRAMEBUFFER
+8	0x000000C0	HAL_BLOCKDEV
+
+Key point: Rocket 68 automatically handles TRAP exceptions by reading the vector from 0xA0 + (trap_number * 4). You just need to ensure your system.bin is loaded at ROM_BASE so the vector table is at address 0x00000000. No special configuration in Rocket 68 is needed — it natively supports the 68000 vector table mechanism. 
+
+ROM (0x00000000)          HDD/sector_0000.bin
+┌─────────────────┐       ┌──────────────────────┐
+│ Minimal Bootstrap│──────▶│  system.rom (HAL)    │
+│ - Init SP       │  load  │ - Vector Table       │
+│ - Init HDD      │       │ - TRAP handlers      │
+│ - Load sector 0 │       │ - Cold boot          │
+│ - Copy to RAM   │       │ - Shell entry        │
+│ - Jump to RAM   │       └──────────────────────┘
+└─────────────────┘   

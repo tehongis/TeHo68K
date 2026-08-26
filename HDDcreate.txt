@@ -1,0 +1,12 @@
+mkdir HDD
+cd HDD
+
+# Create boot sector (sector 0) - compile simple_shell.asm
+# Using a 68000 assembler like as68k or vasm:
+vasmm68k_mot -Fbin simple_shell.asm -o sector_0000.bin
+
+# Create a sample program (sector 1)
+echo -e "\x4E\x71\x4E\x71" > sector_0001.bin  # NOPs as placeholder
+
+# Create additional "files" as sectors
+echo "Hello from virtual HDD!" > sector_0002.bin   
