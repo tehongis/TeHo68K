@@ -1,97 +1,30 @@
+; =============================================================================
 ; system.asm - HAL System ROM for 68000 Virtual Computer
 ; Assemble with: vasm68k_mot -Fbin system.asm -o system.bin
-; Load at ROM_BASE ($00000000)
+; Load at RAM_BASE ($00040000)
+; =============================================================================
+        INCLUDE "HAL.i"
 
-        include "HAL.i"   
-
-        ORG     $00000000
-
-; ===== EXCEPTION VECTOR TABLE =====
-        DC.L    $00080000      ; $00: Initial SSP
-        DC.L    COLD_BOOT       ; $04: Reset Vector
-        DC.L    HAL_RESERVED    ; $08-$7C: Exceptions (fill with HAL_RESERVED)
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-
-; ===== TRAP VECTORS ($80-$FC) =====
-        DC.L    HAL_RESERVED    ; $80
-        DC.L    HAL_RESERVED    ; $84
-        DC.L    HAL_RESERVED    ; $88
-        DC.L    HAL_RESERVED    ; $8C
-        DC.L    HAL_RESERVED    ; $90
-        DC.L    HAL_RESERVED    ; $94
-        DC.L    HAL_RESERVED    ; $98
-        DC.L    HAL_RESERVED    ; $9C
-
-; TRAP vectors (offset $80-$FC in vector table)
-        DC.L    $00040100      ; TRAP #0 → HAL_MEM in RAM
-        DC.L    $00040110      ; TRAP #1 → HAL_IO in RAM
-        DC.L    $00040120      ; TRAP #2 → HAL_TIMER in RAM
-        DC.L    $00040130      ; TRAP #3 → HAL_DATA in RAM
-        DC.L    $00040140      ; TRAP #4 → HAL_CONTEXT in RAM
-        DC.L    $00040150      ; TRAP #5 → HAL_SYSTEM in RAM
-        DC.L    $00040160      ; TRAP #6 → HAL_MOUSE in RAM
-        DC.L    $00040170      ; TRAP #7 → HAL_FRAMEBUFFER in RAM
-        DC.L    $00040180      ; TRAP #8 → HAL_BLOCKDEV in RAM   
-
-        DC.L    HAL_RESERVED    ; $C4-$FC: Reserved
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-        DC.L    HAL_RESERVED
-
+        ORG     $00040000
 
 ; ===== COLD BOOT =====
-        ORG     $00000080
-
 COLD_BOOT:
-        MOVE.L  #$00080000, SP
-        
-        ; Copy our vector table (at $00040000) to real vector table ($00000000)
-        LEA     $00040000, A0         ; Our vector table in RAM
-        LEA     $00000000, A1         ; Real vector table
-        MOVEQ   #0, D0
-VT_COPY:
-        MOVE.L  (A0)+, (A1)+
-        ADDQ.L  #1, D0
-        CMPI    #256, D0               ; 256 bytes = 64 vectors
-        BLT     VT_COPY
-                
-        ; Init memory manager (free list at $00040000)
-        LEA     $00040000, A0
-        MOVE.L  #0, (A0)
+        MOVE.L  #$00080000,SP
+
+        ; Alustetaan TRAP-vektorit dynaamisesti muistin alkuun ($00000080 eteenpäin)
+        MOVE.L  #HAL_MEM,$00000080          ; TRAP #0
+        MOVE.L  #HAL_IO,$00000084           ; TRAP #1
+        MOVE.L  #HAL_TIMER,$00000088        ; TRAP #2
+        MOVE.L  #HAL_DATA,$0000008C         ; TRAP #3
+        MOVE.L  #HAL_CONTEXT,$00000090      ; TRAP #4
+        MOVE.L  #HAL_SYSTEM,$00000094       ; TRAP #5
+        MOVE.L  #HAL_MOUSE,$00000098        ; TRAP #6
+        MOVE.L  #HAL_FRAMEBUFFER,$0000009C  ; TRAP #7
+        MOVE.L  #HAL_BLOCKDEV,$000000A0     ; TRAP #8
+
+        ; Alustetaan muistinhallinnan vapaa lista ($00046000), koodin jälkeen
+        LEA     $00046000,A0
+        MOVE.L  #0,(A0)
         
         ; Init timer
         MOVE.L  #0, TIMER_PERIOD_REG
@@ -103,15 +36,16 @@ VT_COPY:
         MOVE.W  #600, $00FF0004
         MOVE.B  #8, $00FF0006
         
-        ; Init palette (grayscale)
-        MOVEQ   #0, D0
+        ; Init palette
 PAL_INIT:
-        MOVE.B  D0, PALETTE_BASE(D0)
-        MOVE.B  D0, PALETTE_BASE+1(D0)
-        MOVE.B  D0, PALETTE_BASE+2(D0)
-        ADDQ.L  #3, D0
-        CMPI    #3*256, D0
-        BLT     PAL_INIT
+        ; Init palette (16-color VGA default color set)
+        LEA     VGA_PALETTE_DATA,A0         ; Osoitin lähdedataan
+        LEA     PALETTE_BASE,A1             ; Osoitin videopalettiin
+        MOVE.W  #47,D0                      ; 16 väriä * 3 tavua = 48 tavua
+PAL_INIT_LOOP:
+        MOVE.B  (A0)+,(A1)+                 ; Kopioidaan väriarvot
+        DBRA    D0,PAL_INIT_LOOP
+
         
         ; Init HDD
         MOVE.B  #$01, HDD_CMD_REG
@@ -137,8 +71,6 @@ BOOT_COPY:
         BLT     BOOT_COPY
         
         JMP     $00040000
-
-; ===== HAL DISPATCHERS =====
 
 HAL_MEM:
         MOVE.L  D0, D1
@@ -668,3 +600,12 @@ HAL_RESERVED:
         STOP    #$2700
 
         END   
+
+; ===== PALETTE DATA TABLE =====
+VGA_PALETTE_DATA:
+        DC.B    $00,$00,$00, $00,$00,$AA, $00,$AA,$00, $00,$AA,$AA ; 0-3
+        DC.B    $AA,$00,$00, $AA,$00,$AA, $AA,$55,$00, $AA,$AA,$AA ; 4-7
+        DC.B    $55,$55,$55, $55,$55,$FF, $55,$FF,$55, $55,$FF,$FF ; 8-11
+        DC.B    $FF,$55,$55, $FF,$55,$FF, $FF,$FF,$55, $FF,$FF,$FF ; 12-15
+
+        END        
