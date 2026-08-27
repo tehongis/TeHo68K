@@ -46,32 +46,13 @@ PAL_INIT_LOOP:
         MOVE.B  (A0)+,(A1)+                 ; Kopioidaan väriarvot
         DBRA    D0,PAL_INIT_LOOP
 
-        
-        ; Init HDD
-        MOVE.B  #$01, HDD_CMD_REG
-HDD_WAIT:
-        BTST    #0, HDD_STATUS_REG
-        BEQ     HDD_WAIT
-        
-        ; Load boot sector 0
-        MOVE.W  #0, HDD_SECTOR_LO
-        MOVE.B  #$20, HDD_CMD_REG
-BOOT_WAIT:
-        BTST    #0, HDD_STATUS_REG
-        BEQ     BOOT_WAIT
-        
-        ; Copy to RAM and jump
-        LEA     HDD_DATA_REG, A0
-        LEA     $00040000, A1
-        MOVEQ   #0, D0
-BOOT_COPY:
-        MOVE.B  (A0), (A1)+
-        ADDQ.L  #1, D0
-        CMPI    #512, D0
-        BLT     BOOT_COPY
-        
-        JMP     $00040000
+        ; ===== KORJATTU ROM-KÄYNNISTYS (HDD Ohitettu) =====
+        ; Ei yritetä ladata mitään kovalevyltä, koska ydin on jo muistissa.
+        BRA     KERNEL_START
 
+KERNEL_START:
+        ; Tähän kohtaan jatkuu kernel.asm-tiedostosi seuraava osio,
+        ; kuten muistinhallinnan alustus (LEA $00046000, A0) jne.
 HAL_MEM:
         MOVE.L  D0, D1
         CMP.L   #HAL_MEM_ALLOC, D1

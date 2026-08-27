@@ -40,6 +40,9 @@ void vm_init(VirtualMachine* vm) {
     
     vm->fb_width = FB_WIDTH;
     vm->fb_height = FB_HEIGHT;
+    vm->fb_dirty = 1;        // LISÄTTY: Pakottaa SDL-ikkunan aukeamaan heti
+    vm->palette_dirty = 1;   // LISÄTTY: Pakottaa paletin latautumaan
+
 }
 
 void vm_cleanup(VirtualMachine* vm) {
@@ -48,6 +51,8 @@ void vm_cleanup(VirtualMachine* vm) {
     free(vm->framebuffer);
     free(vm->hdd_path);
 }
+
+
 
 static void hdd_execute_command(VirtualMachine* vm, uint8_t cmd) {
     char filepath[512];

@@ -1,3 +1,4 @@
 rom/autoboot.bin
 /rocket68
 *.o
+*.bin
