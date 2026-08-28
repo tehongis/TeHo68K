@@ -10,9 +10,6 @@
 #include "HAL.h"
 #include "m68k.h"
 
-
-
-
 /* =============================================================================
  * GLOBAALIT EMULAATTORIMUUTTUJAT
  * =============================================================================
@@ -289,11 +286,11 @@ void init_video() {
     //memset(palette_buffer, 0, PALETTE_SIZE);
 
     SDL_Init(SDL_INIT_VIDEO);
-    window = SDL_CreateWindow("M68k Emulator Framebuffer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600, 0);
+    window = SDL_CreateWindow("M68k Emulator Framebuffer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, VRAM_X, VRAM_Y, 0);
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     
     // Luodaan 8-bittinen indeksoitu tekstuuri
-    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBX8888, SDL_TEXTUREACCESS_STREAMING, 800, 600);
+    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBX8888, SDL_TEXTUREACCESS_STREAMING, VRAM_X, VRAM_Y);
     
     // Alustetaan SDL-paletti 256 värille
     sdl_palette = SDL_AllocPalette(256);
@@ -301,9 +298,9 @@ void init_video() {
 
 void render_frame(void) {
     // Luodaan staattinen puskuri, joka vastaa tismalleen 800x600 kokoisen ruudun 32-bit pikseleitä
-    static uint32_t raw_pixels[800 * 600];
+    static uint32_t raw_pixels[ VRAM_X *  VRAM_Y];
 
-    for (int i = 0; i < 800 * 600; i++) {
+    for (int i = 0; i <  VRAM_X *  VRAM_Y; i++) {
         uint8_t index = system_ram[VRAM_START + i];
         unsigned int base = PALETTE_START + (index * 4);
         
@@ -324,7 +321,7 @@ void render_frame(void) {
     }
 
     // Päivitetään tekstuuri ja piirretään
-    SDL_UpdateTexture(texture, NULL, raw_pixels, 800 * sizeof(uint32_t));
+    SDL_UpdateTexture(texture, NULL, raw_pixels, VRAM_X * sizeof(uint32_t));
     
     SDL_RenderClear(renderer);
     SDL_RenderCopy(renderer, texture, NULL, NULL);

@@ -7,7 +7,9 @@
 
 
 #define VRAM_START    0x00080000
-#define VRAM_SIZE     (800 * 600) // 480,000 tavua
+#define VRAM_X        320
+#define VRAM_Y        256
+#define VRAM_SIZE     (VRAM_X*VRAM_Y)
 #define PALETTE_START 0x00088000
 #define PALETTE_SIZE  (256 * 4)   // 1024 tavua (32-bit ARGB per väri)
 

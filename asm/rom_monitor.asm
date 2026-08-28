@@ -8,7 +8,7 @@
 * VEKTORITAULUKKO (Alkaa osoitteesta $00000000)
 * =================================================================
     ORG     $00000000
-    DC.L    $00080000           * Alustus: Pinon huippu (Stack Pointer)
+    DC.L    $0000fffe           * Alustus: Pinon huippu (Stack Pointer)
     DC.L    Main                * Alustus: Ohjelman aloitusosoite (PC)
 
     ORG     $00000064           * IRQ 1 Autovector (Näppäimistö sisään)
@@ -50,7 +50,6 @@ Main:
 
 Loop:
     JMP     Loop
-
 
 * =================================================================
 * PALETIN LATAUSRUTIINI
@@ -182,7 +181,7 @@ Print_Char_Loop:
 
     * Siirretään kursorikohdistinta 8 pikseliä oikealle seuraavaa merkkiä varten
     ADDQ.W  #8,D1
-    CMPI.W  #800,D1             * Saavutettiinko ruudun oikea reuna?
+    CMPI.W  #320,D1             * Saavutettiinko ruudun oikea reuna?
     BLT     Save_Cursor_X
     
     * Jos reuna saavutettiin, tehdään automaattinen rivinvaihto
