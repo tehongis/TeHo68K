@@ -1,661 +1,550 @@
 Sections:
 00: "org0001:0" (0-8)
-01: "org0002:64" (64-68)
-02: "org0003:68" (68-6C)
-03: "org0004:1000" (1000-15AE)
+01: "org0002:1000" (1000-14A4)
 
 
 Source: "asm/rom_monitor.asm"
-                            	     1: * =================================================================
-                            	     2: * VAKIOT JA MUISTIOSOITTEET
-                            	     3: * =================================================================
-                            	     4: 
-                            	     5:     include "HAL.i"
-
-Source: "HAL.i"
                             	     1: ; =============================================================================
-                            	     2: ; MINITIETOKONEEN HAL (HARDWARE ABSTRACTION LAYER) MÄÄRITTELYT
-                            	     3: ; Kääntäjäyhteensopivuus: vasm68k_mot (Motorola Syntax)
-                            	     4: ; Syntaksisäännöt: LABELIT ISROLLA, käskyt ja rekisterit pienellä.
-                            	     5: ; =============================================================================
+                            	     2: ; M68K ROM Monitori - Sarjaportti-I/O & Sektoripohjainen HDD Ohjain
+                            	     3: ; =============================================================================
+                            	     4: 
+                            	     5:     org     $00000000           ; Absoluuttinen alku muistissa
                             	     6: 
-                            	     7: SYSTEM_MEM_SIZE equ $100000
-                            	     8: 
-                            	     9: VRAM_START    equ   $00080000
-                            	    10: VRAM_X        equ   320
-                            	    11: VRAM_Y        equ   256
-                            	    12: VRAM_SIZE     equ   (VRAM_X*VRAM_Y)
-                            	    13: PALETTE_START equ   $00088000
-                            	    14: PALETTE_SIZE  equ   (256*4)
-                            	    15: FONT_ROM      EQU   $0008c000
-                            	    16: 
-                            	    17: ; Virtuaalisen UART:n rekisterit
-                            	    18: UART_IN_ADDR  equ   $0008F000
-                            	    19: UART_OUT_ADDR equ   $0008F004
-                            	    20: 
+00:00000000 00100000        	     7:     dc.l    $00100000           ; osoite 0: Initial SP (1MB RAM loppu)
+00:00000004 00001000        	     8:     dc.l    start               ; osoite 4: Initial PC (Hyppy start-kohtaan)
+                            	     9: 
+                            	    10: ; =============================================================================
+                            	    11: ; Laitteistomääritykset (Memory-Mapped I/O Rekisterit)
+                            	    12: ; =============================================================================
+                            	    13: IO_STATUS     equ     $00F00000   
+                            	    14: IO_DATA       equ     $00F00004   
+                            	    15: HDD_COMMAND   equ     $00F00100   
+                            	    16: HDD_STATUS    equ     $00F00101   
+                            	    17: HDD_SECTOR    equ     $00F00102   
+                            	    18: HDD_DMA_ADDR  equ     $00F00108   
+                            	    19: 
+                            	    20: IO_TIMER      equ     $00F00200   ; 32-bit millisekunnit
+                            	    21: 
+                            	    22: ; =============================================================================
+                            	    23: ; Monitorin käynnistyspiste
+                            	    24: ; =============================================================================
+                            	    25:     org     $00001000           ; Pakotetaan monitorikoodi osoitteeseen $1000
+                            	    26: start:
+                            	    27:     ; 1. Avataan virtuaalinen kiintolevy
+01:00001000 13FC000100F00100	    28:     move.b  #1,HDD_COMMAND
+01:00001008 4A3900F00101    	    29:     tst.b   HDD_STATUS
+01:0000100E 6708            	    30:     beq     .hdd_ok
+                            	    31:     
+01:00001010 41F810FA        	    32:     lea     HDD_ERR_MSG,a0
+01:00001014 610C            	    33:     bsr     print_string
+01:00001016 6006            	    34:     bra     .boot_basic
+                            	    35: 
+                            	    36: .hdd_ok:
+01:00001018 41F810B0        	    37:     lea     WELCOME_MSG,a0
+01:0000101C 6104            	    38:     bsr     print_string
+                            	    39: 
+                            	    40: .boot_basic:
+                            	    41:     ; 2. Siirrytään Tiny BASICiin (joka alkaa nyt heti monitorin perään)
+01:0000101E 4EF8112C        	    42:     jmp     START_BASIC           
+                            	    43: 
+                            	    44: ; =============================================================================
+                            	    45: ; Sisäiset apuohjelmat
+                            	    46: ; =============================================================================
+                            	    47: print_string:
+01:00001022 1018            	    48:     move.b  (a0)+,d0
+01:00001024 6704            	    49:     beq     .done
+01:00001026 6144            	    50:     bsr     OUTCH
+01:00001028 60F8            	    51:     bra     print_string
+                            	    52: .done:
+01:0000102A 4E75            	    53:     rts
+                            	    54: 
+                            	    55: ; =============================================================================
+                            	    56: ; Kiintolevyn Alirutiinit
+                            	    57: ; =============================================================================
+                            	    58: HDD_READ_SECTOR:
+01:0000102C 23C000F00102    	    59:     move.l  d0,HDD_SECTOR      
+01:00001032 23C800F00108    	    60:     move.l  a0,HDD_DMA_ADDR    
+01:00001038 13FC000200F00100	    61:     move.b  #2,HDD_COMMAND     
+01:00001040 103900F00101    	    62:     move.b  HDD_STATUS,d0      
+01:00001046 4E75            	    63:     rts
+                            	    64: 
+                            	    65: HDD_WRITE_SECTOR:
+01:00001048 23C000F00102    	    66:     move.l  d0,HDD_SECTOR      
+01:0000104E 23C800F00108    	    67:     move.l  a0,HDD_DMA_ADDR    
+01:00001054 13FC000300F00100	    68:     move.b  #3,HDD_COMMAND     
+01:0000105C 103900F00101    	    69:     move.b  HDD_STATUS,d0      
+01:00001062 4E75            	    70:     rts
+                            	    71: 
+                            	    72:     xdef    GET_TICKS
+                            	    73: GET_TICKS:
+01:00001064 203900F00200    	    74:     move.l  IO_TIMER,d0        ; Luetaan 32-bittinen arvo suoraan C-emulaattorilta
+01:0000106A 4E75            	    75:     rts
+                            	    76: 
+                            	    77: ; =============================================================================
+                            	    78: ; Päätefunktiot
+                            	    79: ; =============================================================================
+                            	    80: OUTCH:
+01:0000106C 1F01            	    81:     move.b  d1,-(sp)
+                            	    82: .wait_tx:
+01:0000106E 123900F00000    	    83:     move.b  IO_STATUS,d1       
+01:00001074 02010002        	    84:     andi.b  #$02,d1            
+01:00001078 67F4            	    85:     beq     .wait_tx            
+01:0000107A 13C000F00004    	    86:     move.b  d0,IO_DATA         
+01:00001080 121F            	    87:     move.b  (sp)+,d1
+01:00001082 4E75            	    88:     rts
+                            	    89: 
+                            	    90: INCH:
+01:00001084 103900F00000    	    91:     move.b  IO_STATUS,d0       
+01:0000108A 02000001        	    92:     andi.b  #$01,d0            
+01:0000108E 67F4            	    93:     beq     INCH                
+01:00001090 103900F00004    	    94:     move.b  IO_DATA,d0         
+01:00001096 4E75            	    95:     rts
+                            	    96: 
+                            	    97: TSTAT:
+01:00001098 103900F00000    	    98:     move.b  IO_STATUS,d0       
+01:0000109E 02000001        	    99:     andi.b  #$01,d0            
+01:000010A2 6706            	   100:     beq     .no_char            
+01:000010A4 103C00FF        	   101:     move.b  #$FF,d0            
+01:000010A8 4E75            	   102:     rts
+                            	   103: .no_char:
+01:000010AA 103C0000        	   104:     move.b  #$00,d0            
+01:000010AE 4E75            	   105:     rts
+                            	   106: 
+                            	   107: ; =============================================================================
+                            	   108: ; Data-alue
+                            	   109: ; =============================================================================
+                            	   110: WELCOME_MSG:
+01:000010B0 0D              	   111:     dc.b    13,10,"M68K MBOOT v1.2 - SEKTORI-HDD VALMIS.",13,10
+01:000010B1 0A
+01:000010B2 4D36384B204D424F
+01:000010BA 4F542076312E3220
+01:000010C2 2D2053454B544F52
+01:000010CA 492D484444205641
+01:000010D2 4C4D49532E
+01:000010D7 0D
+01:000010D8 0A
+01:000010D9 4BC384594E4E4953	   112:     dc.b    "KÄYNNISTETÄÄN TINY BASIC...",13,10,0
+01:000010E1 544554C384C3844E
+01:000010E9 2054494E59204241
+01:000010F1 5349432E2E2E
+01:000010F7 0D
+01:000010F8 0A
+01:000010F9 00
+                            	   113:     
+                            	   114: HDD_ERR_MSG:
+01:000010FA 0D              	   115:     dc.b    13,10,"VIRHE: Virtuaalilevyn alustus epaonnistui!",13,10,0
+01:000010FB 0A
+01:000010FC 56495248453A2056
+01:00001104 6972747561616C69
+01:0000110C 6C6576796E20616C
+01:00001114 7573747573206570
+01:0000111C 616F6E6E69737475
+01:00001124 6921
+01:00001126 0D
+01:00001127 0A
+01:00001128 00
+                            	   116: 
+                            	   117:     align   2                   
+                            	   118: 
+                            	   119: ; =============================================================================
+                            	   120: ; SISÄLLYTETÄÄN TINY BASIC
+                            	   121: ; =============================================================================
+                            	   122:     include "tinybasic.asm"
+
+Source: "tinybasic.asm"
+                            	     1: ; =============================================================================
+                            	     2: ; Gordon Brandly's 68000 Tiny BASIC - Sisällytetty versio
+                            	     3: ; =============================================================================
+                            	     4: 
+                            	     5:     ; KORJATTU: Ei org-määritystä tässä,jatketaan suoraan monitorin perään!
+                            	     6: 
+                            	     7: START_BASIC:
+01:0000112C 2E7C00100000    	     8:     move.l  #$00100000,sp      ; Varmistetaan pinon paikka
+                            	     9:     
+                            	    10:     ; Alustetaan BASIC-koodialueen osoittimet
+01:00001132 41F84000        	    11:     lea     TXT_START,a0
+01:00001136 21C8149C        	    12:     move.l  a0,tx_start_ptr
+01:0000113A 43F84000        	    13:     lea     TXT_START,a1
+01:0000113E 21C914A0        	    14:     move.l  a1,tx_end_ptr      
+                            	    15: 
+                            	    16:     ; Tulostetaan käynnistysviesti
+01:00001142 41F812EE        	    17:     lea     INIT_MSG,a0
+01:00001146 61000132        	    18:     bsr     print_string_tb
+                            	    19: 
+                            	    20: .prompt_loop:
+01:0000114A 41F81340        	    21:     lea     READY_MSG,a0
+01:0000114E 6100012A        	    22:     bsr     print_string_tb
+                            	    23: 
+                            	    24:     ; Luetaan käyttäjän syöte puskuriin
+01:00001152 41F83000        	    25:     lea     INPUT_BUFFER,a0
+01:00001156 6100012E        	    26:     bsr     get_line_tb
+                            	    27: 
+                            	    28:     ; Jäsennetään syöte
+01:0000115A 41F83000        	    29:     lea     INPUT_BUFFER,a0
+01:0000115E 6100016E        	    30:     bsr     skip_spaces
+01:00001162 1010            	    31:     move.b  (a0),d0
+01:00001164 67E4            	    32:     beq     .prompt_loop        
+                            	    33: 
+01:00001166 B03C0030        	    34:     cmp.b   #'0',d0
+01:0000116A 6D08            	    35:     blt     .handle_command
+01:0000116C B03C0039        	    36:     cmp.b   #'9',d0
+01:00001170 6F0000E0        	    37:     ble     .handle_line_number
+                            	    38: 
+                            	    39: .handle_command:
+01:00001174 43F81482        	    40:     lea     CMD_HELP,a1
+01:00001178 61000160        	    41:     bsr     compare_string
+01:0000117C 6734            	    42:     beq     .do_help
+                            	    43: 
+01:0000117E 43F81487        	    44:     lea     CMD_LIST,a1
+01:00001182 61000156        	    45:     bsr     compare_string
+01:00001186 670000A8        	    46:     beq     .do_list
+                            	    47: 
+01:0000118A 43F8148C        	    48:     lea     CMD_SAVE,a1
+01:0000118E 6100014A        	    49:     bsr     compare_string
+01:00001192 673A            	    50:     beq     .do_save
+                            	    51: 
+01:00001194 43F81491        	    52:     lea     CMD_LOAD,a1
+01:00001198 61000140        	    53:     bsr     compare_string
+01:0000119C 6752            	    54:     beq     .do_load
+                            	    55: 
+01:0000119E 43F81496        	    56:     lea     CMD_NEW,a1
+01:000011A2 61000136        	    57:     bsr     compare_string
+01:000011A6 6714            	    58:     beq     .do_new
+                            	    59: 
+01:000011A8 41F81348        	    60:     lea     SYNTAX_ERR,a0
+01:000011AC 610000CC        	    61:     bsr     print_string_tb
+01:000011B0 6098            	    62:     bra     .prompt_loop
+                            	    63: 
+                            	    64: .do_help:
+01:000011B2 41F813C4        	    65:     lea     HELP_TEXT,a0
+01:000011B6 610000C2        	    66:     bsr     print_string_tb
+01:000011BA 608E            	    67:     bra     .prompt_loop
+                            	    68: 
+                            	    69: .do_new:
+01:000011BC 2038149C        	    70:     move.l  tx_start_ptr,d0
+01:000011C0 21C014A0        	    71:     move.l  d0,tx_end_ptr      
+01:000011C4 2040            	    72:     move.l  d0,a0
+01:000011C6 10BC0000        	    73:     move.b  #0,(a0)            
+01:000011CA 6000FF7E        	    74:     bra     .prompt_loop
+                            	    75: 
+                            	    76: .do_save:
+01:000011CE 41F81378        	    77:     lea     SAVE_MSG,a0
+01:000011D2 610000A6        	    78:     bsr     print_string_tb
+01:000011D6 7000            	    79:     moveq   #0,d0              
+01:000011D8 2078149C        	    80:     move.l  tx_start_ptr,a0    
+01:000011DC 6100FE6A        	    81:     bsr     HDD_WRITE_SECTOR    
+01:000011E0 4A00            	    82:     tst.b   d0                  
+01:000011E2 6642            	    83:     bne     .disk_error
+01:000011E4 41F813BE        	    84:     lea     OK_MSG,a0
+01:000011E8 61000090        	    85:     bsr     print_string_tb
+01:000011EC 6000FF5C        	    86:     bra     .prompt_loop
+                            	    87: 
+                            	    88: .do_load:
+01:000011F0 41F8139D        	    89:     lea     LOAD_MSG,a0
+01:000011F4 61000084        	    90:     bsr     print_string_tb
+01:000011F8 7000            	    91:     moveq   #0,d0              
+01:000011FA 2078149C        	    92:     move.l  tx_start_ptr,a0    
+01:000011FE 6100FE2C        	    93:     bsr     HDD_READ_SECTOR     
+01:00001202 4A00            	    94:     tst.b   d0                  
+01:00001204 6620            	    95:     bne     .disk_error
+                            	    96: 
+01:00001206 2078149C        	    97:     move.l  tx_start_ptr,a0
+01:0000120A 323C01FF        	    98:     move.w  #511,d1
+                            	    99: .find_end:
+01:0000120E 4A18            	   100:     tst.b   (a0)+
+01:00001210 6704            	   101:     beq     .end_found
+01:00001212 51C9FFFA        	   102:     dbra    d1,.find_end
+                            	   103: .end_found:
+01:00001216 5388            	   104:     subq.l  #1,a0
+01:00001218 21C814A0        	   105:     move.l  a0,tx_end_ptr      
+01:0000121C 41F813BE        	   106:     lea     OK_MSG,a0
+01:00001220 6158            	   107:     bsr     print_string_tb
+01:00001222 6000FF26        	   108:     bra     .prompt_loop
+                            	   109: 
+                            	   110: .disk_error:
+01:00001226 41F81358        	   111:     lea     DISK_ERR_MSG,a0
+01:0000122A 614E            	   112:     bsr     print_string_tb
+01:0000122C 6000FF1C        	   113:     bra     .prompt_loop
+                            	   114: 
+                            	   115: .do_list:
+01:00001230 2078149C        	   116:     move.l  tx_start_ptr,a0
+01:00001234 227814A0        	   117:     move.l  tx_end_ptr,a1
+01:00001238 B3C8            	   118:     cmp.l   a0,a1
+01:0000123A 6712            	   119:     beq     .list_empty         
+                            	   120: .list_loop:
+01:0000123C B1C9            	   121:     cmp.l   a1,a0
+01:0000123E 6C00FF0A        	   122:     bge     .prompt_loop
+01:00001242 1018            	   123:     move.b  (a0)+,d0
+01:00001244 6700FF04        	   124:     beq     .prompt_loop        
+01:00001248 6100FE22        	   125:     bsr     OUTCH
+01:0000124C 60EE            	   126:     bra     .list_loop
+                            	   127: .list_empty:
+01:0000124E 6000FEFA        	   128:     bra     .prompt_loop
+                            	   129: 
+                            	   130: .handle_line_number:
+01:00001252 227814A0        	   131:     move.l  tx_end_ptr,a1
+01:00001256 41F83000        	   132:     lea     INPUT_BUFFER,a0
+                            	   133: .copy_line:
+01:0000125A 1018            	   134:     move.b  (a0)+,d0
+01:0000125C 12C0            	   135:     move.b  d0,(a1)+
+01:0000125E B03C000D        	   136:     cmp.b   #13,d0
+01:00001262 66F6            	   137:     bne     .copy_line
+                            	   138:     
+01:00001264 5389            	   139:     subq.l  #1,a1
+01:00001266 12FC000D        	   140:     move.b  #13,(a1)+
+01:0000126A 12FC000A        	   141:     move.b  #10,(a1)+
+01:0000126E 12BC0000        	   142:     move.b  #0,(a1)            
+01:00001272 21C914A0        	   143:     move.l  a1,tx_end_ptr      
+01:00001276 6000FED2        	   144:     bra     .prompt_loop
+                            	   145: 
+                            	   146: print_string_tb:
+01:0000127A 1018            	   147:     move.b  (a0)+,d0
+01:0000127C 6706            	   148:     beq     .msg_done
+01:0000127E 6100FDEC        	   149:     bsr     OUTCH
+01:00001282 60F6            	   150:     bra     print_string_tb
+                            	   151: .msg_done:
+01:00001284 4E75            	   152:     rts
+                            	   153: 
+                            	   154: get_line_tb:
+01:00001286 2448            	   155:     move.l  a0,a2              
+                            	   156: .get_char:
+01:00001288 6100FDFA        	   157:     bsr     INCH
+01:0000128C B03C0008        	   158:     cmp.b   #8,d0              
+01:00001290 670E            	   159:     beq     .backspace
+01:00001292 B03C000D        	   160:     cmp.b   #13,d0             
+01:00001296 6718            	   161:     beq     .line_end
+01:00001298 14C0            	   162:     move.b  d0,(a2)+
+01:0000129A 6100FDD0        	   163:     bsr     OUTCH               
+01:0000129E 60E8            	   164:     bra     .get_char
+                            	   165: .backspace:
+01:000012A0 B5C8            	   166:     cmp.l   a0,a2              
+01:000012A2 67E4            	   167:     beq     .get_char
+01:000012A4 538A            	   168:     subq.l  #1,a2
+01:000012A6 103C0008        	   169:     move.b  #8,d0
+01:000012AA 6100FDC0        	   170:     bsr     OUTCH               
+01:000012AE 60D8            	   171:     bra     .get_char
+                            	   172: .line_end:
+01:000012B0 14FC000D        	   173:     move.b  #13,(a2)+          
+01:000012B4 14FC000A        	   174:     move.b  #10,(a2)+          
+01:000012B8 14BC0000        	   175:     move.b  #0,(a2)            
+01:000012BC 103C000D        	   176:     move.b  #13,d0
+01:000012C0 6100FDAA        	   177:     bsr     OUTCH
+01:000012C4 103C000A        	   178:     move.b  #10,d0
+01:000012C8 6100FDA2        	   179:     bsr     OUTCH               
+01:000012CC 4E75            	   180:     rts
+                            	   181: 
+                            	   182: skip_spaces:
+01:000012CE 0C100020        	   183:     cmp.b   #' ',(a0)
+01:000012D2 6604            	   184:     bne     .skip_done
+01:000012D4 5288            	   185:     addq.l  #1,a0
+01:000012D6 60F6            	   186:     bra     skip_spaces
+                            	   187: .skip_done:
+01:000012D8 4E75            	   188:     rts
+                            	   189: 
+                            	   190: compare_string:
+01:000012DA 2448            	   191:     move.l  a0,a2
+                            	   192: .comp_loop:
+01:000012DC 1219            	   193:     move.b  (a1)+,d1
+01:000012DE 670A            	   194:     beq     .comp_match         
+01:000012E0 141A            	   195:     move.b  (a2)+,d2
+01:000012E2 B401            	   196:     cmp.b   d1,d2
+01:000012E4 67F6            	   197:     beq     .comp_loop
+01:000012E6 7001            	   198:     moveq   #1,d0
+01:000012E8 4E75            	   199:     rts
+                            	   200: .comp_match:
+01:000012EA 7000            	   201:     moveq   #0,d0              
+01:000012EC 4E75            	   202:     rts
+                            	   203: 
+01:000012EE 0D              	   204: INIT_MSG:   dc.b    13,10,"68000 TINY BASIC v1.1 (Lohkolevyllinen)",13,10
+01:000012EF 0A
+01:000012F0 3638303030205449
+01:000012F8 4E59204241534943
+01:00001300 2076312E3120284C
+01:00001308 6F686B6F6C657679
+01:00001310 6C6C696E656E29
+01:00001317 0D
+01:00001318 0A
+01:00001319 4B69726A6F697461	   205:             dc.b    "Kirjoita HELP listataksesi komennot.",13,10,0
+01:00001321 2048454C50206C69
+01:00001329 73746174616B7365
+01:00001331 7369206B6F6D656E
+01:00001339 6E6F742E
+01:0000133D 0D
+01:0000133E 0A
+01:0000133F 00
+01:00001340 5265616479      	   206: READY_MSG:  dc.b    "Ready",13,10,0
+01:00001345 0D
+01:00001346 0A
+01:00001347 00
+01:00001348 53796E7461782045	   207: SYNTAX_ERR: dc.b    "Syntax Error!",13,10,0
+01:00001350 72726F7221
+01:00001355 0D
+01:00001356 0A
+01:00001357 00
+01:00001358 4B69696E746F6C65	   208: DISK_ERR_MSG: dc.b  "Kiintolevyvirhe sektorilla 0!",13,10,0
+01:00001360 7679766972686520
+01:00001368 73656B746F72696C
+01:00001370 6C61203021
+01:00001375 0D
+01:00001376 0A
+01:00001377 00
+01:00001378 54616C6C656E6E65	   209: SAVE_MSG:   dc.b    "Tallennetaan ohjelmaa lohkolle 0... ",0
+01:00001380 7461616E206F686A
+01:00001388 656C6D6161206C6F
+01:00001390 686B6F6C6C652030
+01:00001398 2E2E2E20
+01:0000139C 00
+01:0000139D 4C6164617461616E	   210: LOAD_MSG:   dc.b    "Ladataan ohjelmaa lohkolta 0... ",0
+01:000013A5 206F686A656C6D61
+01:000013AD 61206C6F686B6F6C
+01:000013B5 746120302E2E2E20
+01:000013BD 00
+01:000013BE 4F4B2E          	   211: OK_MSG:     dc.b    "OK.",13,10,0
+01:000013C1 0D
+01:000013C2 0A
+01:000013C3 00
+                            	   212: 
+01:000013C4 0D              	   213: HELP_TEXT:  dc.b    13,10,"Tuetut komennot:",13,10
+01:000013C5 0A
+01:000013C6 547565747574206B
+01:000013CE 6F6D656E6E6F743A
+01:000013D6 0D
+01:000013D7 0A
+01:000013D8 202048454C50202D	   214:             dc.b    "  HELP - Nayttaa taman listan",13,10
+01:000013E0 204E617974746161
+01:000013E8 2074616D616E206C
+01:000013F0 697374616E
+01:000013F5 0D
+01:000013F6 0A
+01:000013F7 20204C495354202D	   215:             dc.b    "  LIST - Tulostaa BASIC-ohjelman",13,10
+01:000013FF 2054756C6F737461
+01:00001407 612042415349432D
+01:0000140F 6F686A656C6D616E
+01:00001417 0D
+01:00001418 0A
+01:00001419 20204E455720202D	   216:             dc.b    "  NEW  - Tyhjentaa muistin",13,10
+01:00001421 205479686A656E74
+01:00001429 6161206D75697374
+01:00001431 696E
+01:00001433 0D
+01:00001434 0A
+01:00001435 202053415645202D	   217:             dc.b    "  SAVE - Tallentaa ohjelman lohkolle 0",13,10
+01:0000143D 2054616C6C656E74
+01:00001445 6161206F686A656C
+01:0000144D 6D616E206C6F686B
+01:00001455 6F6C6C652030
+01:0000145B 0D
+01:0000145C 0A
+01:0000145D 20204C4F4144202D	   218:             dc.b    "  LOAD - Lataa ohjelman lohkolta 0",13,10,0
+01:00001465 204C61746161206F
+01:0000146D 686A656C6D616E20
+01:00001475 6C6F686B6F6C7461
+01:0000147D 2030
+01:0000147F 0D
+01:00001480 0A
+01:00001481 00
+                            	   219: 
+01:00001482 48454C50        	   220: CMD_HELP:   dc.b    "HELP",0
+01:00001486 00
+01:00001487 4C495354        	   221: CMD_LIST:   dc.b    "LIST",0
+01:0000148B 00
+01:0000148C 53415645        	   222: CMD_SAVE:   dc.b    "SAVE",0
+01:00001490 00
+01:00001491 4C4F4144        	   223: CMD_LOAD:   dc.b    "LOAD",0
+01:00001495 00
+01:00001496 4E4557          	   224: CMD_NEW:    dc.b    "NEW",0
+01:00001499 00
+                            	   225: 
+                            	   226:             align   2
+01:0000149C 00000000        	   227: tx_start_ptr: dc.l  0
+01:000014A0 00000000        	   228: tx_end_ptr:   dc.l  0
+                            	   229: 
+                            	   230: INPUT_BUFFER: equ   $00003000   
+                            	   231: TXT_START:    equ   $00004000   
+                            	   232: 
 
 Source: "asm/rom_monitor.asm"
-                            	     6: 
-                            	     7: * =================================================================
-                            	     8: * VEKTORITAULUKKO (Alkaa osoitteesta $00000000)
-                            	     9: * =================================================================
-                            	    10:     ORG     $00000000
-00:00000000 00010000        	    11:     DC.L    $00010000           * Alustus: Pinon huippu (Stack Pointer)
-00:00000004 00001000        	    12:     DC.L    Main                * Alustus: Ohjelman aloitusosoite (PC)
-                            	    13: 
-                            	    14:     ORG     $00000064           * IRQ 1 Autovector (Näppäimistö sisään)
-01:00000064 00001076        	    15:     DC.L    Keyboard_ISR
-                            	    16: 
-                            	    17:     ORG     $00000068           * IRQ 2 Autovector (Tulostus ulos)
-02:00000068 0000104E        	    18:     DC.L    Output_ISR
-                            	    19: 
-                            	    20: * =================================================================
-                            	    21: * PÄÄOHJELMA
-                            	    22: * =================================================================
-                            	    23:               ORG   $00001000   * Ohjelmakoodin paikka RAM-muistissa
-                            	    24: Main:
-                            	    25: 
-                            	    26: ; --- Init_Palette
-03:00001000 41F8117E        	    27:     LEA     VGA_Palette_Data,A0  * Osoitin tämän taulukon alkuun
-03:00001004 43F900088000    	    28:     LEA     PALETTE_START,A1           * Osoitin emuloituun palettimuistiin
-03:0000100A 303C0100        	    29:     MOVE.W  #256,D0              * Looppi pyörii 256 kertaa (kaikki värit)
-                            	    30: .paletteLoop
-03:0000100E 22D8            	    31:     MOVE.L  (A0)+,(A1)+          * Kopioidaan väri ($00RRGGBB) palettiin
-03:00001010 5340            	    32:     SUBQ.W  #1,D0
-03:00001012 66FA            	    33:     BNE     .paletteLoop
-                            	    34: 
-                            	    35:     * 1. Alustetaan muuttujat nollaksi
-03:00001014 42B81148        	    36:     CLR.L   StringPtr
-                            	    37: 
-                            	    38:     * 3. KUTSUTAAN TULOSTUSRUTIINIA: Tulostetaan haluttu viesti
-03:00001018 41F81154        	    39:     LEA     MyMessage,A0        * Ladataan viestin osoite A0-rekisteriin
-03:0000101C 6116            	    40:     BSR     PrintString         * Kutsutaan tulostuksen käynnistystä
-                            	    41: 
-                            	    42:     * 2. Sallitaan keskeytykset tasoilla 1 ja 2 (SR interrupt mask = 0)
-03:0000101E 027CF8FF        	    43:     ANDI.W  #$F8FF,SR
-                            	    44: 
-                            	    45:     * 3. KUTSUTAAN TULOSTUSRUTIINIA: Tulostetaan haluttu viesti
-03:00001022 42B81148        	    46:     CLR.L   StringPtr
-03:00001026 41F81154        	    47:     LEA     MyMessage,A0        * Ladataan viestin osoite A0-rekisteriin
-03:0000102A 7602            	    48:     move.l  #$2,d3
-03:0000102C 6100008A        	    49:     BSR     PrintStringFB         * Kutsutaan tulostuksen käynnistystä
-                            	    50: 
-                            	    51: Loop:
-03:00001030 4EF81030        	    52:     JMP     Loop
-                            	    53: 
-                            	    54: 
-                            	    55: * =================================================================
-                            	    56: * PALETIN LATAUSRUTIINI
-                            	    57: * =================================================================
-                            	    58: 
-                            	    59: * =================================================================
-                            	    60: * ALIOHJELMA: PrintString (Käynnistää tulostusketjun)
-                            	    61: * Sisääntulo: A0 = Tulostettavan merkkijonon osoite
-                            	    62: * =================================================================
-                            	    63: PrintString:
-03:00001034 48E78080        	    64:     MOVEM.L D0/A0,-(SP)         * Tallenna käytettävät rekisterit
-                            	    65: 
-                            	    66:     * Tarkistetaan heti, onko jono tyhjä (ensimmäinen merkki nolla)
-03:00001038 1010            	    67:     MOVE.B  (A0),D0
-03:0000103A 670C            	    68:     BEQ     Print_Done          * Jos on nolla, älä tee mitään
-                            	    69: 
-                            	    70:     * Asetetaan osoitin valmiiksi seuraavaa merkkiä varten (A0 + 1)
-03:0000103C 5288            	    71:     ADDQ.L  #1,A0
-03:0000103E 21C81148        	    72:     MOVE.L  A0,StringPtr
-                            	    73: 
-                            	    74:     * Kirjoitetaan ensimmäinen merkki suoraan UART:iin.
-                            	    75:     * Tämä saa C-koodin tulostamaan sen ja herättämään ensimmäisen IRQ 2:n.
-03:00001042 13C00008F004    	    76:     MOVE.B  D0,UART_OUT_ADDR
-                            	    77: 
-                            	    78: Print_Done:
-03:00001048 4CDF0101        	    79:     MOVEM.L (SP)+,D0/A0         * Palauta rekisterit
-03:0000104C 4E75            	    80:     RTS
-                            	    81: 
-                            	    82: * =================================================================
-                            	    83: * IRQ 2: TULOSTUKSEN KESKEYTYSRUTIINI (MC68000-YHTEENSOPIVA)
-                            	    84: * =================================================================
-                            	    85: Output_ISR:
-03:0000104E 48E78080        	    86:     MOVEM.L D0/A0,-(SP)         * Tallenna rekisterit suojaukseen
-                            	    87: 
-03:00001052 20781148        	    88:     MOVE.L  StringPtr,A0        * Ladataan nykyinen teksti-osoitin
-                            	    89:     
-                            	    90:     * KORJAUS: Alkuperäinen 68000 ei tue TST.L A0 -käskyä.
-                            	    91:     * Verrataan osoiterekisteriä arvoon 0 CMPA-käskyllä (asettaa Z-lipun, jos NULL).
-03:00001056 B0FC0000        	    92:     CMPA.W  #0,A0               
-03:0000105A 6714            	    93:     BEQ     ISR_Done            * Jos on nolla, ei aktiivista viestiä -> poistu
-                            	    94: 
-03:0000105C 1018            	    95:     MOVE.B  (A0)+,D0            * Luetaan merkki ja siirretään osoitinta eteenpäin
-03:0000105E 670C            	    96:     BEQ     Message_Finished    * Jos merkki on $00, viesti loppui
-                            	    97: 
-                            	    98:     * Päivitetään uusi osoitin muistiin seuraavaa keskeytystä varten
-03:00001060 21C81148        	    99:     MOVE.L  A0,StringPtr        
-                            	   100:     
-                            	   101:     * Lähetetään merkki laitteelle (C-puoli tulostace ja nostaa uuden IRQ 2:n)
-03:00001064 13C00008F004    	   102:     MOVE.B  D0,UART_OUT_ADDR
-03:0000106A 6004            	   103:     BRA     ISR_Done
-                            	   104: 
-                            	   105: Message_Finished:
-03:0000106C 42B81148        	   106:     CLR.L   StringPtr           * Nollataan osoitin merkiksi siitä, että viesti päättyi
-                            	   107: 
-                            	   108: ISR_Done:
-03:00001070 4CDF0101        	   109:     MOVEM.L (SP)+,D0/A0         * Palauta rekisterit
-03:00001074 4E73            	   110:     RTE                         * Paluu keskeytyksestä
-                            	   111: 
-                            	   112: * =================================================================
-                            	   113: * IRQ 1: NÄPPÄIMISTÖN KESKEYTYSRUTIINI (MUOKATTU HEKSATULOSTUKSELLE)
-                            	   114: * =================================================================
-                            	   115: Keyboard_ISR:
-03:00001076 48E7E080        	   116:     MOVEM.L D0-D2/A0,-(SP)      * Tallenna kaikki käytettävät rekisterit
-                            	   117: 
-03:0000107A 10390008F000    	   118:     MOVE.B  (UART_IN_ADDR),D0        * 1. Luetaan saapunut näppäinkoodi D0-rekisteriin
-03:00001080 41F8114C        	   119:     LEA     HexBuffer,A0        * 2. Otetaan puskurin osoite A0-rekisteriin
-                            	   120: 
-                            	   121:     * --- YLEMPI HEX-MERKKI (Ylemmät 4 bittiä) ---
-03:00001084 1200            	   122:     MOVE.B  D0,D1               * Otetaan kopio koodista D1-rekisteriin
-03:00001086 E809            	   123:     LSR.B   #4,D1               * Siirretään yläbitit alabiteiksi (esim. $41 -> $04)
-03:00001088 6120            	   124:     BSR     ConvertNibble       * Muutetaan numeroksi/kirjaimeksi ASCII-muotoon
-03:0000108A 10C1            	   125:     MOVE.B  D1,(A0)+            * Tallennetaan puskurin ensimmäiseksi merkiksi
-                            	   126: 
-                            	   127:     * --- ALEMPI HEX-MERKKI (Alemmat 4 bittiä) ---
-03:0000108C 1200            	   128:     MOVE.B  D0,D1               * Otetaan uusi kopio koodista D1-rekisteriin
-03:0000108E 0201000F        	   129:     ANDI.B  #$0F,D1             * Maskataan yläbitit pois (esim. $41 -> $01)
-03:00001092 6116            	   130:     BSR     ConvertNibble       * Muutetaan ASCII-muotoon
-03:00001094 10C1            	   131:     MOVE.B  D1,(A0)+            * Tallennetaan puskurin toiseksi merkiksi
-                            	   132: 
-                            	   133:     * --- LOPPUMERKIT ---
-03:00001096 10FC0020        	   134:     MOVE.B  #32,(A0)+           * Lisätään välilyönti (ASCII 32) heksalukujen väliin
-03:0000109A 10BC0000        	   135:     MOVE.B  #0,(A0)             * Lisätään nollaterminaattori merkkijonon loppuun ($00)
-                            	   136: 
-                            	   137:     * --- TULOSTUS ---
-03:0000109E 41F8114C        	   138:     LEA     HexBuffer,A0        * Ladataan puskurin alkuosoite takaisin A0:aan
-03:000010A2 6190            	   139:     BSR     PrintString         * Kutsutaan valmista tulostusrutiinia!
-                            	   140: 
-03:000010A4 4CDF0107        	   141:     MOVEM.L (SP)+,D0-D2/A0      * Palautetaan rekisterit
-03:000010A8 4E73            	   142:     RTE                         * Paluu keskeytyksestä
-                            	   143: 
-                            	   144: * =================================================================
-                            	   145: * APURUTIINI: ConvertNibble (Muuntaa 4 bittiä ASCII-heksamerkiksi)
-                            	   146: * Sisääntulo: D1 = Alimmat 4 bittiä sisältävät muunnettavan arvon (0-15)
-                            	   147: * Ulostulo:   D1 = Valmis ASCII-merkki ('0'-'9' tai 'A'-'F')
-                            	   148: * =================================================================
-                            	   149: ConvertNibble:
-03:000010AA 0C01000A        	   150:     CMPI.B  #10,D1              * Onko arvo alle 10 (0-9)?
-03:000010AE 6D02            	   151:     BLT     IsDigit             * Jos on, hypätään suoraan numeron käsittelyyn
-                            	   152:     
-                            	   153:     * Jos arvo on 10-15 (A-F):
-03:000010B0 5E01            	   154:     ADDQ.B  #7,D1               * Lisätään erotus numeroiden ja kirjainten välillä ASCII-taulukossa
-                            	   155: IsDigit:
-03:000010B2 06010030        	   156:     ADDI.B  #$30,D1             * Lisätään '0'-merkin ASCII-arvo ($30)
-03:000010B6 4E75            	   157:     RTS
-                            	   158: 
-                            	   159: ; --------- Framebuffer printString
-                            	   160: * =================================================================
-                            	   161: * ALIOHJELMA: PrintStringFB (Framebuffer/VRAM-versio)
-                            	   162: * Sisääntulo: A0 = Null-terminoidun merkkijonon osoite
-                            	   163: *             D3.B = Tekstin väri (VGA-paletin indeksi)
-                            	   164: * =================================================================
-                            	   165: PrintStringFB:
-03:000010B8 48E7E080        	   166:     MOVEM.L D0-D2/A0,-(SP)      * Tallenna käytettävät rekisterit
-                            	   167: 
-                            	   168: Print_Char_Loop:
-03:000010BC 1018            	   169:     MOVE.B  (A0)+,D0            * Lue merkki ja siirrä osoitinta eteenpäin
-03:000010BE 6736            	   170:     BEQ     Print_DoneFB         * Jos merkki on 0 (loppumerkki), lopeta
-                            	   171: 
-                            	   172:     * TARKISTETAAN RIVINVAIHTO (ASCII 10 / Newline)
-03:000010C0 0C00000A        	   173:     CMPI.B  #10,D0
-03:000010C4 6720            	   174:     BEQ     Handle_Newline
-                            	   175: 
-                            	   176:     * TAVALLISEN MERKIN TULOSTUS
-                            	   177:     * Ladataan kursorin nykyiset koordinaatit DrawChar-aliohjelmalle
-03:000010C6 32381150        	   178:     MOVE.W  (CursorX),D1
-03:000010CA 34381152        	   179:     MOVE.W  (CursorY),D2
-                            	   180:     
-03:000010CE 612C            	   181:     BSR     DrawChar            * Piirretään merkki ruudulle!
-                            	   182: 
-                            	   183:     * Siirretään kursorikohdistinta 8 pikseliä oikealle seuraavaa merkkiä varten
-03:000010D0 5041            	   184:     ADDQ.W  #8,D1
-03:000010D2 0C410140        	   185:     CMPI.W  #320,D1             * Saavutettiinko ruudun oikea reuna?
-03:000010D6 6D04            	   186:     BLT     Save_Cursor_X
-                            	   187:     
-                            	   188:     * Jos reuna saavutettiin, tehdään automaattinen rivinvaihto
-03:000010D8 4241            	   189:     CLR.W  D1                  * X = 0
-03:000010DA 5042            	   190:     ADDQ.W  #8,D2               * Y = Y + 8
-                            	   191: 
-                            	   192: Save_Cursor_X:
-03:000010DC 31C11150        	   193:     MOVE.W  D1,(CursorX)
-03:000010E0 31C21152        	   194:     MOVE.W  D2,(CursorY)
-03:000010E4 60D6            	   195:     BRA     Print_Char_Loop     * Siirrytään seuraavaan merkkiin
-                            	   196: 
-                            	   197: Handle_Newline:
-                            	   198:     * Siirretään kursori seuraavan rivin alkuun (X=0, Y=Y+8)
-03:000010E6 42781150        	   199:     CLR.W   (CursorX)
-03:000010EA 34381152        	   200:     MOVE.W  (CursorY),D2
-03:000010EE 5042            	   201:     ADDQ.W  #8,D2
-                            	   202:     
-                            	   203:     * Valinnainen: Tähän voi lisätä tarkistuksen jos Y > 592 (ruudun rullaus/scroll),
-                            	   204:     * mutta pidetään se aluksi yksinkertaisena.
-03:000010F0 31C21152        	   205:     MOVE.W  D2,(CursorY)
-03:000010F4 60C6            	   206:     BRA     Print_Char_Loop     * Jatgetaan merkkijonon läpikäyntiä
-                            	   207: 
-                            	   208: Print_DoneFB:
-03:000010F6 4CDF0107        	   209:     MOVEM.L (SP)+,D0-D2/A0      * Palauta rekisterit
-03:000010FA 4E75            	   210:     RTS
-                            	   211: 
-                            	   212: ; ------ Framebuffer Draw char 
-                            	   213: 
-                            	   214: DrawChar:
-03:000010FC 48E7FCC0        	   215:     MOVEM.L D0-D5/A0-A1,-(SP)   * Tallenna kaikki käytettävät rekisterit
-                            	   216: 
-                            	   217:     * 1. LASKETAAN MERKIN OSOITE FONT_ROM-ALUEELLA
-03:00001100 0280000000FF    	   218:     ANDI.L  #$000000FF,D0       * Varmistetaan, että D0:ssa on vain tavu
-03:00001106 E788            	   219:     LSL.L   #3,D0               * Kerrotaan ASCII-koodi 8:lla (D0 = koodi * 8)
-03:00001108 41F90008C000    	   220:     LEA     FONT_ROM,A0
-03:0000110E D1C0            	   221:     ADDA.L  D0,A0               * A0 osoittaa nyt halutun merkin 8 tavun alkuun
-                            	   222: 
-                            	   223:     * 2. LASKETAAN KOHDEOSOITE FRAMEBUFFERISSA (VRAM)
-                            	   224:     * Kaava: VRAM_START + (Y * 800) + X
-03:00001110 43F900080000    	   225:     LEA     VRAM_START,A1
-03:00001116 C4FC0320        	   226:     MULU.W  #800,D2             * D2 = Y * 800
-03:0000111A D3C2            	   227:     ADDA.L  D2,A1               * A1 = VRAM + (Y * 800)
-03:0000111C 02810000FFFF    	   228:     ANDI.L  #$0000FFFF,D1       * Varmistetaan X:n puhtaus
-03:00001122 D3C1            	   229:     ADDA.L  D1,A1               * A1 osoittaa nyt pikseliin (X, Y)
-                            	   230: 
-                            	   231:     * 3. PIIRTOSILMUKKA (8 riviä)
-03:00001124 383C0008        	   232:     MOVE.W  #8,D4               * Rivimäärä = 8
-                            	   233: 
-                            	   234: Char_Row_Loop:
-03:00001128 1018            	   235:     MOVE.B  (A0)+,D0            * Luetaan fontin yksi rivitavu (8 bittiä)
-03:0000112A 3A3C0008        	   236:     MOVE.W  #8,D5               * Sarakemäärä = 8 bittiä
-                            	   237: 
-                            	   238: Char_Bit_Loop:
-03:0000112E E318            	   239:     ROL.B   #1,D0               * Pyöräytetään ylin bitti Carry-lippuun
-03:00001130 6402            	   240:     BCC     Pixel_Off           * Jos Carry on 0, hypätään yli (tausta säilyy)
-                            	   241: 
-                            	   242:     * Jos bitti oli 1, piirretään pikseli halutulla värillä
-03:00001132 1283            	   243:     MOVE.B  D3,(A1)
-                            	   244: 
-                            	   245: Pixel_Off:
-03:00001134 5289            	   246:     ADDQ.L  #1,A1               * Siirrytään seuraavaan pikseliin oikealle (X + 1)
-03:00001136 5345            	   247:     SUBQ.W  #1,D5
-03:00001138 66F4            	   248:     BNE     Char_Bit_Loop       * Toistetaan rivin kaikille 8 bitille
-                            	   249: 
-                            	   250:     * Siirrytään seuraavan rivin alkuun framebufferissa
-                            	   251:     * Piirrettiin 8 pikseliä, joten pitää hypätä yli: 800 - 8 = 792 pikseliä
-03:0000113A 43E90318        	   252:     LEA     792(A1),A1
-                            	   253: 
-03:0000113E 5344            	   254:     SUBQ.W  #1,D4
-03:00001140 66E6            	   255:     BNE     Char_Row_Loop       * Toistetaan kaikille 8 riville
-                            	   256: 
-03:00001142 4CDF033F        	   257:     MOVEM.L (SP)+,D0-D5/A0-A1   * Palautetaan rekisterit
-03:00001146 4E75            	   258:     RTS
-                            	   259: 
-                            	   260: * =================================================================
-                            	   261: * TULOSTETTAVA DATA
-                            	   262: * =================================================================
-                            	   263:             EVEN
-                            	   264: 
-03:00001148 00000000        	   265: StringPtr:    DS.L  1           * Osoitin tulostettavan merkkijonon nykyiseen merkkiin
-                            	   266: 
-03:0000114C 00              	   267: HexBuffer:    DS.B  4           
-03:0000114D *
-                            	   268: 
-03:00001150 0000            	   269: CursorX:      DS.W  1           * UUSI: Nykyinen X-koordinaatti (0-799)
-03:00001152 0000            	   270: CursorY:      DS.W  1           * UUSI: Nykyinen Y-koordinaatti (0-599)
-                            	   271: 
-                            	   272: MyMessage:
-03:00001154 4D36386B204D7573	   273:     DC.B    "M68k Musashi keskeytystulostus toimii!",10,13,0
-03:0000115C 61736869206B6573
-03:00001164 6B65797479737475
-03:0000116C 6C6F737475732074
-03:00001174 6F696D696921
-03:0000117A 0A
-03:0000117B 0D
-03:0000117C 00
-                            	   274:     * 10 = Newline (\n), 13 = Carriage Return (\r), 0 = Null-terminaattori
-                            	   275: 
-                            	   276:             EVEN
-                            	   277: 
-                            	   278: VGA_Palette_Data:
-                            	   279: * --- 16 VGA PERUSVÄRIÄ ---
-03:0000117E 00000000        	   280:     DC.L    $00000000    * 0: Musta
-03:00001182 000000AA        	   281:     DC.L    $000000AA    * 1: Sininen
-03:00001186 0000AA00        	   282:     DC.L    $0000AA00    * 2: Vihreä
-03:0000118A 0000AAAA        	   283:     DC.L    $0000AAAA    * 3: Syaani
-03:0000118E 00AA0000        	   284:     DC.L    $00AA0000    * 4: Punainen
-03:00001192 00AA00AA        	   285:     DC.L    $00AA00AA    * 5: Magenta
-03:00001196 00AA5500        	   286:     DC.L    $00AA5500    * 6: Ruskea
-03:0000119A 00AAAAAA        	   287:     DC.L    $00AAAAAA    * 7: Vaaleanharmaa
-03:0000119E 00555555        	   288:     DC.L    $00555555    * 8: Tummanharmaa
-03:000011A2 005555FF        	   289:     DC.L    $005555FF    * 9: Kirkas sininen
-03:000011A6 0055FF55        	   290:     DC.L    $0055FF55    * 10: Kirkas vihreä
-03:000011AA 0055FFFF        	   291:     DC.L    $0055FFFF    * 11: Kirkas syaani
-03:000011AE 00FF5555        	   292:     DC.L    $00FF5555    * 12: Kirkas punainen
-03:000011B2 00FF55FF        	   293:     DC.L    $00FF55FF    * 13: Kirkas magenta
-03:000011B6 00FFFF55        	   294:     DC.L    $00FFFF55    * 14: Keltainen
-03:000011BA 00FFFFFF        	   295:     DC.L    $00FFFFFF    * 15: Valkoinen
-                            	   296: 
-                            	   297: * --- SATEENKAARI JA VÄRISKAALAT (Värit 16-231) ---
-03:000011BE 00000000        	   298:     DC.L    $00000000,$00000040,$00000080,$000000C0,$000000FF,$00004000
-03:000011C2 00000040
-03:000011C6 00000080
-03:000011CA 000000C0
-03:000011CE 000000FF
-03:000011D2 00004000
-03:000011D6 00004040        	   299:     DC.L    $00004040,$00004080,$000040C0,$000040FF,$00008000,$00008040
-03:000011DA 00004080
-03:000011DE 000040C0
-03:000011E2 000040FF
-03:000011E6 00008000
-03:000011EA 00008040
-03:000011EE 00008080        	   300:     DC.L    $00008080,$000080C0,$000080FF,$0000C000,$0000C040,$0000C080
-03:000011F2 000080C0
-03:000011F6 000080FF
-03:000011FA 0000C000
-03:000011FE 0000C040
-03:00001202 0000C080
-03:00001206 0000C0C0        	   301:     DC.L    $0000C0C0,$0000C0FF,$0000FF00,$0000FF40,$0000FF80,$0000FFC0
-03:0000120A 0000C0FF
-03:0000120E 0000FF00
-03:00001212 0000FF40
-03:00001216 0000FF80
-03:0000121A 0000FFC0
-03:0000121E 0000FFFF        	   302:     DC.L    $0000FFFF,$00400000,$00400040,$00400080,$004000C0,$004000FF
-03:00001222 00400000
-03:00001226 00400040
-03:0000122A 00400080
-03:0000122E 004000C0
-03:00001232 004000FF
-03:00001236 00404000        	   303:     DC.L    $00404000,$00404040,$00404080,$004040C0,$004040FF,$00408000
-03:0000123A 00404040
-03:0000123E 00404080
-03:00001242 004040C0
-03:00001246 004040FF
-03:0000124A 00408000
-03:0000124E 00408040        	   304:     DC.L    $00408040,$00408080,$004080C0,$004080FF,$0040C000,$0040C040
-03:00001252 00408080
-03:00001256 004080C0
-03:0000125A 004080FF
-03:0000125E 0040C000
-03:00001262 0040C040
-03:00001266 0040C080        	   305:     DC.L    $0040C080,$0040C0C0,$0040C0FF,$0040FF00,$0040FF40,$0040FF80
-03:0000126A 0040C0C0
-03:0000126E 0040C0FF
-03:00001272 0040FF00
-03:00001276 0040FF40
-03:0000127A 0040FF80
-03:0000127E 0040FFC0        	   306:     DC.L    $0040FFC0,$0040FFFF,$00800000,$00800040,$00800080,$008000C0
-03:00001282 0040FFFF
-03:00001286 00800000
-03:0000128A 00800040
-03:0000128E 00800080
-03:00001292 008000C0
-03:00001296 008000FF        	   307:     DC.L    $008000FF,$00804000,$00804040,$00804080,$008040C0,$008040FF
-03:0000129A 00804000
-03:0000129E 00804040
-03:000012A2 00804080
-03:000012A6 008040C0
-03:000012AA 008040FF
-03:000012AE 00808000        	   308:     DC.L    $00808000,$00808040,$00808080,$008080C0,$008080FF,$0080C000
-03:000012B2 00808040
-03:000012B6 00808080
-03:000012BA 008080C0
-03:000012BE 008080FF
-03:000012C2 0080C000
-03:000012C6 0080C040        	   309:     DC.L    $0080C040,$0080C080,$0080C0C0,$0080C0FF,$0080FF00,$0080FF40
-03:000012CA 0080C080
-03:000012CE 0080C0C0
-03:000012D2 0080C0FF
-03:000012D6 0080FF00
-03:000012DA 0080FF40
-03:000012DE 0080FF80        	   310:     DC.L    $0080FF80,$0080FFC0,$0080FFFF,$00C00000,$00C00040,$00C00080
-03:000012E2 0080FFC0
-03:000012E6 0080FFFF
-03:000012EA 00C00000
-03:000012EE 00C00040
-03:000012F2 00C00080
-03:000012F6 00C000C0        	   311:     DC.L    $00C000C0,$00C000FF,$00C04000,$00C04040,$00C04080,$00C040C0
-03:000012FA 00C000FF
-03:000012FE 00C04000
-03:00001302 00C04040
-03:00001306 00C04080
-03:0000130A 00C040C0
-03:0000130E 00C040FF        	   312:     DC.L    $00C040FF,$00C08000,$00C08040,$00C08080,$00C080C0,$004080FF
-03:00001312 00C08000
-03:00001316 00C08040
-03:0000131A 00C08080
-03:0000131E 00C080C0
-03:00001322 004080FF
-03:00001326 00C0C000        	   313:     DC.L    $00C0C000,$00C0C040,$00C0C080,$00C0C0C0,$00C0C0FF,$00C0FF00
-03:0000132A 00C0C040
-03:0000132E 00C0C080
-03:00001332 00C0C0C0
-03:00001336 00C0C0FF
-03:0000133A 00C0FF00
-03:0000133E 00C0FF40        	   314:     DC.L    $00C0FF40,$00C0FF80,$00C0FFC0,$00C0FFFF,$00FF0000,$00FF0040
-03:00001342 00C0FF80
-03:00001346 00C0FFC0
-03:0000134A 00C0FFFF
-03:0000134E 00FF0000
-03:00001352 00FF0040
-03:00001356 00FF0080        	   315:     DC.L    $00FF0080,$00FF00C0,$00FF00FF,$00FF4000,$00FF4040,$00FF4080
-03:0000135A 00FF00C0
-03:0000135E 00FF00FF
-03:00001362 00FF4000
-03:00001366 00FF4040
-03:0000136A 00FF4080
-03:0000136E 00FF40C0        	   316:     DC.L    $00FF40C0,$00FF40FF,$00FF8000,$00FF8040,$00FF8080,$00FF80C0
-03:00001372 00FF40FF
-03:00001376 00FF8000
-03:0000137A 00FF8040
-03:0000137E 00FF8080
-03:00001382 00FF80C0
-03:00001386 00FF80FF        	   317:     DC.L    $00FF80FF,$00FFC000,$00FFC040,$00FFC080,$00FFC0C0,$00FFC0FF
-03:0000138A 00FFC000
-03:0000138E 00FFC040
-03:00001392 00FFC080
-03:00001396 00FFC0C0
-03:0000139A 00FFC0FF
-03:0000139E 00FFFF00        	   318:     DC.L    $00FFFF00,$00FFFF40,$00FFFF80,$00FFFFC0,$00FFFFFF,$00200000
-03:000013A2 00FFFF40
-03:000013A6 00FFFF80
-03:000013AA 00FFFFC0
-03:000013AE 00FFFFFF
-03:000013B2 00200000
-03:000013B6 00400000        	   319:     DC.L    $00400000,$00600000,$00800000,$00A00000,$00C00000,$00E00000
-03:000013BA 00600000
-03:000013BE 00800000
-03:000013C2 00A00000
-03:000013C6 00C00000
-03:000013CA 00E00000
-03:000013CE 00002000        	   320:     DC.L    $00002000,$00004000,$00006000,$00008000,$0000A000,$0000C000
-03:000013D2 00004000
-03:000013D6 00006000
-03:000013DA 00008000
-03:000013DE 0000A000
-03:000013E2 0000C000
-03:000013E6 0000E000        	   321:     DC.L    $0000E000,$00000020,$00000040,$00000060,$00000080,$000000A0
-03:000013EA 00000020
-03:000013EE 00000040
-03:000013F2 00000060
-03:000013F6 00000080
-03:000013FA 000000A0
-03:000013FE 000000C0        	   322:     DC.L    $000000C0,$000000E0,$00202000,$00404000,$00606000,$00808000
-03:00001402 000000E0
-03:00001406 00202000
-03:0000140A 00404000
-03:0000140E 00606000
-03:00001412 00808000
-03:00001416 00A0A000        	   323:     DC.L    $00A0A000,$00C0C000,$00E0E000,$00200020,$00400040,$00600060
-03:0000141A 00C0C000
-03:0000141E 00E0E000
-03:00001422 00200020
-03:00001426 00400040
-03:0000142A 00600060
-03:0000142E 00800080        	   324:     DC.L    $00800080,$00A000A0,$00C000C0,$00E000E0,$00002020,$00004040
-03:00001432 00A000A0
-03:00001436 00C000C0
-03:0000143A 00E000E0
-03:0000143E 00002020
-03:00001442 00004040
-03:00001446 00006060        	   325:     DC.L    $00006060,$00008080,$0000A0A0,$0000C0C0,$0000E0E0,$00202020
-03:0000144A 00008080
-03:0000144E 0000A0A0
-03:00001452 0000C0C0
-03:00001456 0000E0E0
-03:0000145A 00202020
-03:0000145E 00404040        	   326:     DC.L    $00404040,$00606060,$00808080,$00A0A0A0,$00C0C0C0,$00E0E0E0
-03:00001462 00606060
-03:00001466 00808080
-03:0000146A 00A0A0A0
-03:0000146E 00C0C0C0
-03:00001472 00E0E0E0
-03:00001476 00102030        	   327:     DC.L    $00102030,$00203040,$00304050,$00405060,$00506070,$00607080
-03:0000147A 00203040
-03:0000147E 00304050
-03:00001482 00405060
-03:00001486 00506070
-03:0000148A 00607080
-03:0000148E 00708090        	   328:     DC.L    $00708090,$008090A0,$0090A0B0,$00A0B0C0,$00B0C0D0,$00C0D0E0
-03:00001492 008090A0
-03:00001496 0090A0B0
-03:0000149A 00A0B0C0
-03:0000149E 00B0C0D0
-03:000014A2 00C0D0E0
-03:000014A6 00D0E0F0        	   329:     DC.L    $00D0E0F0,$00400020,$00800040,$00C00060,$00FF0080,$00004020
-03:000014AA 00400020
-03:000014AE 00800040
-03:000014B2 00C00060
-03:000014B6 00FF0080
-03:000014BA 00004020
-03:000014BE 00008040        	   330:     DC.L    $00008040,$0000C060,$0000FF80,$00200040,$00400080,$006000C0
-03:000014C2 0000C060
-03:000014C6 0000FF80
-03:000014CA 00200040
-03:000014CE 00400080
-03:000014D2 006000C0
-03:000014D6 008000FF        	   331:     DC.L    $008000FF,$00204000,$00408000,$0060C000,$0080FF00,$00402000
-03:000014DA 00204000
-03:000014DE 00408000
-03:000014E2 0060C000
-03:000014E6 0080FF00
-03:000014EA 00402000
-03:000014EE 00804000        	   332:     DC.L    $00804000,$00C06000,$00FF8000,$00002040,$00004080,$000060C0
-03:000014F2 00C06000
-03:000014F6 00FF8000
-03:000014FA 00002040
-03:000014FE 00004080
-03:00001502 000060C0
-03:00001506 000080FF        	   333:     DC.L    $000080FF,$00404020,$00808040,$00C0C060,$00FFFF80,$00204040
-03:0000150A 00404020
-03:0000150E 00808040
-03:00001512 00C0C060
-03:00001516 00FFFF80
-03:0000151A 00204040
-03:0000151E 00408080        	   334:     DC.L    $00408080,$0060C0C0,$0080FFFF,$00402040,$00804080,$00C060C0
-03:00001522 0060C0C0
-03:00001526 0080FFFF
-03:0000152A 00402040
-03:0000152E 00804080
-03:00001532 00C060C0
-03:00001536 00FF80FF        	   335:     DC.L    $00FF80FF,$00112233,$00223344,$00334455,$00445566,$00556677
-03:0000153A 00112233
-03:0000153E 00223344
-03:00001542 00334455
-03:00001546 00445566
-03:0000154A 00556677
-                            	   336: 
-                            	   337: * --- 24 HARMAASÄVYÄ (Värit 232-255) ---
-03:0000154E 00080808        	   338:     DC.L    $00080808,$00101010,$00181818,$00202020,$00282828,$00303030
-03:00001552 00101010
-03:00001556 00181818
-03:0000155A 00202020
-03:0000155E 00282828
-03:00001562 00303030
-03:00001566 00383838        	   339:     DC.L    $00383838,$00404040,$00484848,$00505050,$00585858,$00606060
-03:0000156A 00404040
-03:0000156E 00484848
-03:00001572 00505050
-03:00001576 00585858
-03:0000157A 00606060
-03:0000157E 00686868        	   340:     DC.L    $00686868,$00707070,$00787878,$00808080,$00888888,$00909090
-03:00001582 00707070
-03:00001586 00787878
-03:0000158A 00808080
-03:0000158E 00888888
-03:00001592 00909090
-03:00001596 00989898        	   341:     DC.L    $00989898,$00A0A0A0,$00A8A8A8,$00B0B0B0,$00B8B8B8,$00C0C0C0
-03:0000159A 00A0A0A0
-03:0000159E 00A8A8A8
-03:000015A2 00B0B0B0
-03:000015A6 00B8B8B8
-03:000015AA 00C0C0C0
-                            	   342: 
+                            	   123: 
 
 
 Symbols by name:
-Char_Bit_Loop                    A:0000112E
-Char_Row_Loop                    A:00001128
-ConvertNibble                    A:000010AA
-CursorX                          A:00001150
-CursorY                          A:00001152
-DrawChar                         A:000010FC
-FONT_ROM                         E:0008C000
-Handle_Newline                   A:000010E6
-HexBuffer                        A:0000114C
-ISR_Done                         A:00001070
-IsDigit                          A:000010B2
-Keyboard_ISR                     A:00001076
-Loop                             A:00001030
-Main                             A:00001000
-Message_Finished                 A:0000106C
-MyMessage                        A:00001154
-Output_ISR                       A:0000104E
-PALETTE_START                    E:00088000
-Pixel_Off                        A:00001134
-PrintString                      A:00001034
-PrintStringFB                    A:000010B8
-Print_Char_Loop                  A:000010BC
-Print_Done                       A:00001048
-Print_DoneFB                     A:000010F6
-Save_Cursor_X                    A:000010DC
-StringPtr                        A:00001148
-UART_IN_ADDR                     E:0008F000
-UART_OUT_ADDR                    E:0008F004
-VGA_Palette_Data                 A:0000117E
-VRAM_START                       E:00080000
-VRAM_X                           E:00000140
-VRAM_Y                           E:00000100
+CMD_HELP                         A:00001482
+CMD_LIST                         A:00001487
+CMD_LOAD                         A:00001491
+CMD_NEW                          A:00001496
+CMD_SAVE                         A:0000148C
+DISK_ERR_MSG                     A:00001358
+GET_TICKS                        A:00001064 EXP
+HDD_COMMAND                      E:00F00100
+HDD_DMA_ADDR                     E:00F00108
+HDD_ERR_MSG                      A:000010FA
+HDD_READ_SECTOR                  A:0000102C
+HDD_SECTOR                       E:00F00102
+HDD_STATUS                       E:00F00101
+HDD_WRITE_SECTOR                 A:00001048
+HELP_TEXT                        A:000013C4
+INCH                             A:00001084
+INIT_MSG                         A:000012EE
+INPUT_BUFFER                     E:00003000
+IO_DATA                          E:00F00004
+IO_STATUS                        E:00F00000
+IO_TIMER                         E:00F00200
+LOAD_MSG                         A:0000139D
+OK_MSG                           A:000013BE
+OUTCH                            A:0000106C
+READY_MSG                        A:00001340
+SAVE_MSG                         A:00001378
+START_BASIC                      A:0000112C
+SYNTAX_ERR                       A:00001348
+TSTAT                            A:00001098
+TXT_START                        E:00004000
+WELCOME_MSG                      A:000010B0
+compare_string                   A:000012DA
+get_line_tb                      A:00001286
+print_string                     A:00001022
+print_string_tb                  A:0000127A
+skip_spaces                      A:000012CE
+start                            A:00001000
+tx_end_ptr                       A:000014A0
+tx_start_ptr                     A:0000149C
 
 Symbols by value:
-00000100 VRAM_Y
-00000140 VRAM_X
-00001000 Main
-00001030 Loop
-00001034 PrintString
-00001048 Print_Done
-0000104E Output_ISR
-0000106C Message_Finished
-00001070 ISR_Done
-00001076 Keyboard_ISR
-000010AA ConvertNibble
-000010B2 IsDigit
-000010B8 PrintStringFB
-000010BC Print_Char_Loop
-000010DC Save_Cursor_X
-000010E6 Handle_Newline
-000010F6 Print_DoneFB
-000010FC DrawChar
-00001128 Char_Row_Loop
-0000112E Char_Bit_Loop
-00001134 Pixel_Off
-00001148 StringPtr
-0000114C HexBuffer
-00001150 CursorX
-00001152 CursorY
-00001154 MyMessage
-0000117E VGA_Palette_Data
-00080000 VRAM_START
-00088000 PALETTE_START
-0008C000 FONT_ROM
-0008F000 UART_IN_ADDR
-0008F004 UART_OUT_ADDR
+00001000 start
+00001022 print_string
+0000102C HDD_READ_SECTOR
+00001048 HDD_WRITE_SECTOR
+00001064 GET_TICKS
+0000106C OUTCH
+00001084 INCH
+00001098 TSTAT
+000010B0 WELCOME_MSG
+000010FA HDD_ERR_MSG
+0000112C START_BASIC
+0000127A print_string_tb
+00001286 get_line_tb
+000012CE skip_spaces
+000012DA compare_string
+000012EE INIT_MSG
+00001340 READY_MSG
+00001348 SYNTAX_ERR
+00001358 DISK_ERR_MSG
+00001378 SAVE_MSG
+0000139D LOAD_MSG
+000013BE OK_MSG
+000013C4 HELP_TEXT
+00001482 CMD_HELP
+00001487 CMD_LIST
+0000148C CMD_SAVE
+00001491 CMD_LOAD
+00001496 CMD_NEW
+0000149C tx_start_ptr
+000014A0 tx_end_ptr
+00003000 INPUT_BUFFER
+00004000 TXT_START
+00F00000 IO_STATUS
+00F00004 IO_DATA
+00F00100 HDD_COMMAND
+00F00101 HDD_STATUS
+00F00102 HDD_SECTOR
+00F00108 HDD_DMA_ADDR
+00F00200 IO_TIMER

@@ -2,3 +2,5 @@ ROM/*.bin
 *.o
 *.bin
 m68k_vm
+emulator
+HDD/virtual_disk.img

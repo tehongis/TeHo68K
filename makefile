@@ -1,5 +1,6 @@
 CC      = gcc
 CFLAGS  = -Wall -Wextra -O2 $(shell sdl2-config --cflags)
+# KORJATTU: Poistettu -lSDL2_image, koska käytetään raakabinäärifonttia
 LIBS    = $(shell sdl2-config --libs) -lm
 
 # Polku Musashi-kansioon (isolla M-kirjaimella)
@@ -11,10 +12,9 @@ ASM_DIR     = asm
 ROM_DIR     = ROM
 HDD_DIR     = HDD
 
-# KORJATTU: Poistettu ylimääräinen $ merkki kommentin edestä
-SRC = $(SRC_DIR)/main_emulator.c #(SRC_DIR)/memory_bus.c
+SRC         = $(SRC_DIR)/main_emulator.c
 
-# LISÄTTY: m68kdasm.c mukaan disassembleria varten
+# Musashi-lähdekoodit mukaan lukien m68kdasm.c
 MUSASHI_SRC = $(MUSASHI_DIR)/m68kcpu.c \
               $(MUSASHI_DIR)/m68kops.c \
               $(MUSASHI_DIR)/m68kdasm.c \
@@ -22,30 +22,36 @@ MUSASHI_SRC = $(MUSASHI_DIR)/m68kcpu.c \
 
 OBJ = $(SRC:.c=.o) $(MUSASHI_SRC:.c=.o)
 
-TARGET = emulator
+TARGET   = emulator
+FONT_BIN = font_8x16_raw.bin
 
 ASM = vasmm68k_mot
 ASM_FLAGS = -Fbin
 
-# UUSI: Lisätty 'run' PHONY-listalle
 .PHONY: default all clean directories musashi_gen run
 
-# UUSI: Asetetaan oletusmaaliksi 'run', joka ajaa emulaattorin käännöksen jälkeen
 default: run
 
-all: directories $(ROM_DIR)/rom.bin $(TARGET)
-	@if [ ! -f $(ROM_DIR)/font_8x8_raw.bin ]; then \
-		echo "HUOMAUTUS: Muista sijoittaa font_8x8_raw.bin kansioon $(ROM_DIR)/ ennen ajoa!"; \
-	fi
+# all-kohde varmistaa nyt myös fontin ja molempien assemblerkoodien kääntymisen
+all: directories $(FONT_BIN) $(ROM_DIR)/rom.bin $(TARGET)
 
-# UUSI: 'make run' kääntää tarvittaessa kaiken ja käynnistää binäärin
 run: all
 	./$(TARGET)
+
+# AUTOMAATTINEN FONTIGENEROINTI: Jos raakafonttia ei ole, ajetaan python-skripti lennosta
+$(FONT_BIN):
+	@if [ -f convert_font.py ]; then \
+		echo "Generoidaan raakafontti Python-skriptillä..."; \
+		python3 convert_font.py; \
+	else \
+		echo "VIRHE: $(FONT_BIN) puuttuu, eikä convert_font.py-skriptiä löytynyt!"; \
+		exit 1; \
+	fi
 
 $(TARGET): $(OBJ)
 	$(CC) $(OBJ) -o $(TARGET) $(LIBS)
 
-$(ROM_DIR)/rom.bin: $(ASM_DIR)/rom_monitor.asm $(ASM_DIR)/HAL.i
+$(ROM_DIR)/rom.bin: $(ASM_DIR)/rom_monitor.asm $(ASM_DIR)/tinybasic.asm $(ASM_DIR)/HAL.i
 	$(ASM) $(ASM_FLAGS) -I$(ASM_DIR) -L rom.lst -o $(ROM_DIR)/rom.bin $(ASM_DIR)/rom_monitor.asm
 
 %.o: %.c

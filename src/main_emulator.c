@@ -1,453 +1,348 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
-#include <stdbool.h>
 #include <string.h>
-#include <SDL2/SDL.h>
-#include <unistd.h>
-#include <sys/select.h>
-
-#include "HAL.h"
+#include <SDL.h>
 #include "m68k.h"
 
-/* =============================================================================
- * GLOBAALIT EMULAATTORIMUUTTUJAT
- * =============================================================================
- */
-uint8_t* system_ram = NULL;
-bool is_running = true;
+// Hardware-konfiguraatio
+#define RAM_SIZE       (1024 * 1024)           // 1 MB RAM
+#define GRID_COLS      80
+#define GRID_ROWS      40
+#define VRAM_SIZE      (GRID_COLS * GRID_ROWS) // 3200 tavua tekstipuskuria
+#define SECTOR_SIZE    512                     // 512 tavun kiintolevysektori
 
-/* Muuttujien alustukset */
-// uint8_t* system_ram = NULL;
-volatile uint8_t uart_rx_char = 0;
-volatile bool uart_rx_ready = false;
-volatile int g_cpu_stopped = 0;
+// Fontin ja ikkunan mitat
+#define CHAR_WIDTH     8
+#define CHAR_HEIGHT    16
+#define WINDOW_WIDTH   (GRID_COLS * CHAR_WIDTH)   // 640 px
+#define WINDOW_HEIGHT  (GRID_ROWS * CHAR_HEIGHT)  // 640 px
 
-unsigned int cpu_type = SYSTEM_CPU_TYPE;
-unsigned int current_pc = 0;
+// Muistikartan osoitteet (KORJATTU: Ei duplikaatteja tai VSTART-virheitä)
+#define RAM_START      0x00000000
+#define RAM_END        (RAM_START + RAM_SIZE - 1)
+#define VRAM_START     0x00800000
+#define VRAM_END       (VRAM_START + VRAM_SIZE - 1)
 
-unsigned char uart_in_data = 0;  // Tänne tallennetaan PC:ltä saapunut näppäin
+// MMIO-rekisterit (Memory-Mapped I/O)
+#define IO_STATUS      0x00F00000
+#define IO_DATA        0x00F00004
+#define HDD_COMMAND    0x00F00100
+#define HDD_STATUS     0x00F00101
+#define HDD_SECTOR     0x00F00102  // 32-bit paikka
+#define HDD_DMA_ADDR   0x00F00108  // 32-bit paikka
 
-//unsigned char* vram_buffer = NULL;
-//unsigned char* palette_buffer = NULL;
+#define IO_TIMER       0x00F00200  // UUSI: 32-bittinen millisekuntiajastin
 
-SDL_Window* window = NULL;
-SDL_Renderer* renderer = NULL;
-SDL_Texture* texture = NULL; // Sijaitsee muistissa heti puskuriosoittimien vieressä!
-SDL_Palette* sdl_palette = NULL;
 
-volatile bool vram_dirty = false; // Kertoo SDL:lle, että ruutu pitää piirtää uudestaan
+// Globaalit muistipuskurit
+unsigned char* g_ram = NULL;
+unsigned char* g_vram = NULL;
 
-void memory_bus_init(void) {
-    system_ram = calloc(1, SYSTEM_MEM_SIZE);
-    if (!system_ram) {
-        fprintf(stderr, "Keskusmuistin varaus epäonnistui!\n");
-        exit(EXIT_FAILURE);
-    }
+// KORJATTU FONTTIMÄÄRITTELY: Kaksiulotteinen 256 merkin ja 16 rivin taulukko
+unsigned char g_font_bitmap[256][16]; 
+
+// Virtuaalisen päätteen tilamuuttujat
+int g_cursor_x = 0;
+int g_cursor_y = 0;
+unsigned char g_keyboard_char = 0;
+int g_keyboard_ready = 0;
+
+// Virtuaalisen HDD-ohjaimen sisäiset tilat
+FILE* g_hdd_file = NULL;
+unsigned char g_hdd_status = 0;
+unsigned int  g_hdd_sector = 0;
+unsigned int  g_hdd_dma_addr = 0;
+
+// SDL-rajapinnan muuttujat
+SDL_Window* g_window = NULL;
+SDL_Renderer* g_renderer = NULL;
+
+
+// --------------- IO_DATA
+
+
+// Päätteen tekstirullaus (Scroll), kun saavutetaan ruudun alareuna
+void scroll_vram() {
+    memmove(g_vram, g_vram + GRID_COLS, GRID_COLS * (GRID_ROWS - 1));
+    memset(g_vram + GRID_COLS * (GRID_ROWS - 1), ' ', GRID_COLS);
+    g_cursor_y = GRID_ROWS - 1;
 }
 
-void memory_bus_cleanup(void) {
-    if (system_ram) {
-        free(system_ram);
-        system_ram = NULL;
+// Käsittelee Tiny BASICin lähettämät ASCII-merkit ja ohjaa ne VRAM-puskuriin
+void handle_terminal_write(unsigned char ch) {
+    if (ch == 10) { // Line Feed (\n)
+        g_cursor_y++;
+        if (g_cursor_y >= GRID_ROWS) scroll_vram();
+        return;
     }
-}
-
-void dump_cpu_status(void) {
-
-    printf("\n=================== CPU REGISTERS DUMP ===================\n");
-    printf("D0: 0x%08X  D1: 0x%08X  D2: 0x%08X  D3: 0x%08X\n",
-           m68k_get_reg(NULL, M68K_REG_D0), m68k_get_reg(NULL, M68K_REG_D1),
-           m68k_get_reg(NULL, M68K_REG_D2), m68k_get_reg(NULL, M68K_REG_D3));
-    printf("D4: 0x%08X  D5: 0x%08X  D6: 0x%08X  D7: 0x%08X\n",
-           m68k_get_reg(NULL, M68K_REG_D4), m68k_get_reg(NULL, M68K_REG_D5),
-           m68k_get_reg(NULL, M68K_REG_D6), m68k_get_reg(NULL, M68K_REG_D7));
-    printf("----------------------------------------------------------\n");
-    printf("A0: 0x%08X  A1: 0x%08X  A2: 0x%08X  A3: 0x%08X\n",
-           m68k_get_reg(NULL, M68K_REG_A0), m68k_get_reg(NULL, M68K_REG_A1),
-           m68k_get_reg(NULL, M68K_REG_A2), m68k_get_reg(NULL, M68K_REG_A3));
-    printf("A4: 0x%08X  A5: 0x%08X  A6: 0x%08X  A7: 0x%08X (SP)\n",
-           m68k_get_reg(NULL, M68K_REG_A4), m68k_get_reg(NULL, M68K_REG_A5),
-           m68k_get_reg(NULL, M68K_REG_A6), m68k_get_reg(NULL, M68K_REG_A7));
-    printf("----------------------------------------------------------\n");
-    printf("PC: 0x%08X  SR: 0x%04X\n", 
-           m68k_get_reg(NULL, M68K_REG_PC), m68k_get_reg(NULL, M68K_REG_SR));
-    printf("==========================================================\n\n");
-
-    printf("\n--- DISASSEMBLY AROUND PC (0x%08X) ---\n", current_pc);
-    unsigned int inspect_pc = current_pc;
-    char disasm_buffer[128];
-
-    for (int i = 0; i < 5; i++) {
-        // m68k_disassemble palauttaa puretun komennon pituuden tavuina
-        unsigned int bytes_consumed = m68k_disassemble(disasm_buffer, inspect_pc, cpu_type);
-        
-        // Tulostetaan nuoli nykyisen suorituskohdan kohdalle
-        char marker = (inspect_pc == current_pc) ? '>' : ' ';
-        
-        printf("%c 0x%08X: %s\n", marker, inspect_pc, disasm_buffer);
-        
-        // Siirrytään seuraavan komennon osoitteeseen
-        inspect_pc += bytes_consumed;
+    if (ch == 13) { // Carriage Return (\r)
+        g_cursor_x = 0;
+        return;
     }
-    printf("---------------------------------------\n");
-}
-
-void dump_vram_start(int count) {
-    // KORJAUS: Tarkistetaan system_ram, koska erillistä vram_bufferia ei enää ole
-    if (system_ram == NULL) {
-        printf("[VRAM DUMP] Virhe: system_ram on NULL!\n");
+    if (ch == 8 || ch == 127) { // Backspace
+        if (g_cursor_x > 0) g_cursor_x--;
+        g_vram[g_cursor_y * GRID_COLS + g_cursor_x] = ' ';
         return;
     }
 
-    printf("\n--- VRAM-PUSKURIN ALKU (Ensimmäiset %d pikseliä osoitteesta 0x%08X) ---\n", count, VRAM_START);
-    for (int i = 0; i < count; i++) {
-        // Tulostetaan 16 heksalukua per rivi luettavuuden vuoksi
-        if (i > 0 && i % 16 == 0) {
-            printf("\n");
-        }
-        // KORJAUS: Luetaan data suoraan päämuistista VRAM-offsetin kohdalta
-        printf("%02X ", system_ram[VRAM_START + i]);
-    }
-    printf("\n------------------------------------------------------\n\n");
-}
-
-/*
-void handle_trap_file_system(unsigned int command_id) {
-    // TRAP #10 - Passthrough to Host OS "HDD/" folder
-    uint32_t name_len = m68k_read_memory_32(FS_NAME_LEN);
-    char filename[65];
+    // Tavallisen tulostettavan merkin sijoitus
+    g_vram[g_cursor_y * GRID_COLS + g_cursor_x] = ch;
+    g_cursor_x++;
     
-    if (name_len > 64) name_len = 64;
-    for (uint32_t i = 0; i < name_len; i++) {
-        filename[i] = m68k_read_memory_8(FS_NAME_BASE + i);
-    }
-    filename[name_len] = '\0';
-
-    char full_path[256];
-    snprintf(full_path, sizeof(full_path), "HDD/%s", filename);
-
-    switch (command_id) {
-        case 0x00000003: { // HAL_FS_LOAD_FILE
-            // Haetaan kohdemuistiosoite Musashin A0-rekisteristä
-            unsigned int target_addr = m68k_get_reg(NULL, M68K_REG_A0);
-            
-            FILE* f = fopen(full_path, "rb");
-            if (!f) {
-                m68k_set_reg(M68K_REG_D0, -1); // Virhekoodi d0-rekisteriin
-                break;
-            }
-            
-            // Luetaan tiedosto suoraan emuloituun keskusmuistiin
-            size_t bytes_read = fread(&system_ram[target_addr], 1, SYSTEM_MEM_SIZE - target_addr, f);
-            fclose(f);
-            
-            m68k_set_reg(M68K_REG_D0, 0); // Onnistui
-            printf("[HOST HDD] Ladattu tiedosto %s osoitteeseen 0x%08X (%zu tavua)\n", filename, target_addr, bytes_read);
-            break;
-        }
-        case 0x00000004: { // HAL_FS_SAVE_FILE
-            // Tähän voi myöhemmin toteuttaa tiedoston tallennuksen host-koneelle
-            break;
-        }
-        default:
-            break;
+    if (g_cursor_x >= GRID_COLS) {
+        g_cursor_x = 0;
+        g_cursor_y++;
+        if (g_cursor_y >= GRID_ROWS) scroll_vram();
     }
 }
-*/
 
-unsigned int m68k_read_memory_8(unsigned int address) {
-    if (address < SYSTEM_MEM_SIZE) {
-        if (address == UART_IN_ADDR) {
-            // 68k-ohjelma haki näppäinkoodin. Palautetaan se.
-            return uart_in_data;
-        }    
-
-        if (address >= VRAM_START && address < VRAM_START + VRAM_SIZE) {
-            system_ram[address];
+// Käsittelee HDD_COMMAND-rekisteriin tehdyt kirjoitukset isäntäkoneen puolella
+void handle_hdd_command(unsigned char cmd) {
+    if (cmd == 1) { // AVAA LEVY
+        if (!g_hdd_file) {
+            g_hdd_file = fopen("HDD/virtual_disk.img", "r+b");
+            if (!g_hdd_file) {
+                // Jos image puuttuu, luodaan automaattisesti tyhjä 1MB testi-image
+                g_hdd_file = fopen("HDD/virtual_disk.img", "w+b");
+                if (g_hdd_file) {
+                    unsigned char* dummy = calloc(1024 * 1024, 1);
+                    fwrite(dummy, 1, 1024 * 1024, g_hdd_file);
+                    free(dummy);
+                    fseek(g_hdd_file, 0, SEEK_SET);
+                }
+            }
         }
-
-        if (address >= PALETTE_START && address < PALETTE_START + PALETTE_SIZE) {
-            system_ram[address];
-        }
-        return system_ram[address];
+        g_hdd_status = (g_hdd_file) ? 0 : 0xFF;
+        return;
     }
-    printf("Memory read outside of memory range: $%08x\n",address);
-    return 0;
+
+    if (!g_hdd_file) {
+        g_hdd_status = 0xFF; // Ei avattua levykuvaa käytettävissä
+        return;
+    }
+
+    // Lasketaan 512 tavun lohkon siirtymä tiedostossa
+    long offset = (long)g_hdd_sector * SECTOR_SIZE;
+    fseek(g_hdd_file, offset, SEEK_SET);
+
+    if (cmd == 2) { // LUE SEKTORI (Siirto levyltä RAMiin DMA-osoitteeseen)
+        if (g_hdd_dma_addr + SECTOR_SIZE <= RAM_SIZE) {
+            size_t read = fread(&g_ram[g_hdd_dma_addr], 1, SECTOR_SIZE, g_hdd_file);
+            g_hdd_status = (read == SECTOR_SIZE) ? 0 : 0xFF;
+        } else {
+            g_hdd_status = 0xFF; // Muistin ylitysvirhe
+        }
+    } 
+    else if (cmd == 3) { // KIRJOITA SEKTORI (Siirto RAMista levylle)
+        if (g_hdd_dma_addr + SECTOR_SIZE <= RAM_SIZE) {
+            size_t written = fwrite(&g_ram[g_hdd_dma_addr], 1, SECTOR_SIZE, g_hdd_file);
+            fflush(g_hdd_file);
+            g_hdd_status = (written == SECTOR_SIZE) ? 0 : 0xFF;
+        } else {
+            g_hdd_status = 0xFF;
+        }
+    }
+    else if (cmd == 4) { // SULJE LEVY
+        fclose(g_hdd_file);
+        g_hdd_file = NULL;
+        g_hdd_status = 0;
+    }
+}
+
+// ---------- Musashi hooks
+
+
+// --- Musashin muistikoukut (8, 16 ja 32-bittiset luvut ja kirjoitukset) ---
+unsigned int m68k_read_memory_8(unsigned int address) {
+    if (address <= RAM_END) return g_ram[address];
+    if (address >= VRAM_START && address <= VRAM_END) return g_vram[address - VRAM_START];
+    
+    if (address == IO_STATUS) {
+        unsigned int status = 0x02; // Lähetin valmis (Tx)
+        if (g_keyboard_ready) status |= 0x01; // Vastaanotin valmis (Rx)
+        return status;
+    }
+    if (address == IO_DATA) {
+        g_keyboard_ready = 0;
+        return g_keyboard_char;
+    }
+    if (address == HDD_STATUS) return g_hdd_status;
+    return 0xFF;
 }
 
 unsigned int m68k_read_memory_16(unsigned int address) {
-    if (address < SYSTEM_MEM_SIZE) {
-        return (system_ram[address] << 8) | system_ram[address + 1];
-    }
-    return 0;
+    if (address == HDD_SECTOR) return (g_hdd_sector >> 16) & 0xFFFF;
+    if (address == HDD_SECTOR + 2) return g_hdd_sector & 0xFFFF;
+    unsigned int val = m68k_read_memory_8(address) << 8;
+    val |= m68k_read_memory_8(address + 1);
+    return val;
 }
 
 unsigned int m68k_read_memory_32(unsigned int address) {
-    return (m68k_read_memory_16(address) << 16) | m68k_read_memory_16(address + 2);
+    if (address == HDD_SECTOR) return g_hdd_sector;
+    if (address == HDD_DMA_ADDR) return g_hdd_dma_addr;
+    if (address == IO_TIMER) return SDL_GetTicks(); // UUSI: Palauttaa millisekunnit käynnistyksestä
+    
+    unsigned int val = m68k_read_memory_16(address) << 16;
+    val |= m68k_read_memory_16(address + 2);
+    return val;
 }
 
+
 void m68k_write_memory_8(unsigned int address, unsigned int value) {
-    if (address < SYSTEM_MEM_SIZE) {
-
-        if (address == UART_OUT_ADDR) {
-            // 1. 68k kirjoitti merkkiporttiin -> Tulostetaan se isäntäkoneen konsoliin
-            putchar((char)value);
-            fflush(stdout); // Varmistetaan, että merkki tulostuu heti
-
-            // 2. Nostetaan välittömästi IRQ 2. 
-            // Tämä ilmoittaa 68k-ohjelmalle (keskeytyksellä), että UART on vapaa seuraavalle merkille.
-            m68k_set_irq(2);
-            return;        
-        } 
-
-        if (address >= VRAM_START && address < VRAM_START + VRAM_SIZE) {
-            system_ram[address] = (unsigned char)value;
-            vram_dirty = true; // MERKITÄÄN RUUTU DIRTYKSI!
-            return;
-        }
-        if (address >= PALETTE_START && address < PALETTE_START + PALETTE_SIZE) {
-            system_ram[address] = (unsigned char)value;
-            unsigned int offset = address - PALETTE_START;
-            // Etsitään, mihin väri-indeksiin (0-255) tämä tavu kuuluu
-            int color_index = offset / 4;
-           unsigned int base = PALETTE_START + (color_index * 4);
-                                 
-            // 5. Päivitetään SDL-paletti (jos se on olemassa)
-            if (sdl_palette != NULL) {
-                SDL_Color color;
-                color.a = 255; // Alpha unohdetaan
-                
-                // Luetaan värit suoraan system_ramista 68k:n Big-Endian -offseteistä
-                color.r = system_ram[base + 1]; // Red
-                color.g = system_ram[base + 2]; // Green
-                color.b = system_ram[base + 3]; // Blue
-                
-                SDL_SetPaletteColors(sdl_palette, &color, color_index, 1);
-            }            
-            // Päivitetään väri SDL-palettiin
-            vram_dirty = true; // MERKITÄÄN RUUTU DIRTYKSI!
-            return;
-        }
-
-        system_ram[address] = value & 0xFF;
-        return;
-    }
-    printf("Memory write outside of memory range: $%08x\n",address);
+    if (address <= RAM_END) { g_ram[address] = (unsigned char)value; return; }
+    if (address >= VRAM_START && address <= VRAM_END) { g_vram[address - VRAM_START] = (unsigned char)value; return; }
+    
+    if (address == IO_DATA) handle_terminal_write((unsigned char)value);
+    else if (address == HDD_COMMAND) handle_hdd_command((unsigned char)value);
 }
 
 void m68k_write_memory_16(unsigned int address, unsigned int value) {
-    if (address < SYSTEM_MEM_SIZE) {
-        system_ram[address] = (value >> 8) & 0xFF;
-        system_ram[address + 1] = value & 0xFF;
+    if (address == HDD_SECTOR) {
+        g_hdd_sector = (g_hdd_sector & 0x0000FFFF) | ((value & 0xFFFF) << 16);
+    } else if (address == HDD_SECTOR + 2) {
+        g_hdd_sector = (g_hdd_sector & 0xFFFF0000) | (value & 0xFFFF);
+    } else {
+        m68k_write_memory_8(address, (value >> 8) & 0xFF);
+        m68k_write_memory_8(address + 1, value & 0xFF);
     }
 }
 
 void m68k_write_memory_32(unsigned int address, unsigned int value) {
-    m68k_write_memory_16(address, (value >> 16) & 0xFFFF);
-    m68k_write_memory_16(address + 2, value & 0xFFFF);
+    if (address == HDD_SECTOR) g_hdd_sector = value;
+    else if (address == HDD_DMA_ADDR) g_hdd_dma_addr = value;
+    else {
+        m68k_write_memory_16(address, (value >> 16) & 0xFFFF);
+        m68k_write_memory_16(address + 2, value & 0xFFFF);
+    }
 }
 
-/* Musashin vaatimat sisäiset luku-hookit */
-unsigned int m68k_read_immediate_16(unsigned int address) { return m68k_read_memory_16(address); }
-unsigned int m68k_read_immediate_32(unsigned int address) { return m68k_read_memory_32(address); }
-unsigned int m68k_read_pcrelative_8(unsigned int address)  { return m68k_read_memory_8(address); }
-unsigned int m68k_read_pcrelative_16(unsigned int address) { return m68k_read_memory_16(address); }
-unsigned int m68k_read_pcrelative_32(unsigned int address) { return m68k_read_memory_32(address); }
-
-unsigned int m68k_read_disassembler_8(unsigned int address)  { return m68k_read_memory_8(address); }
 unsigned int m68k_read_disassembler_16(unsigned int address) { return m68k_read_memory_16(address); }
 unsigned int m68k_read_disassembler_32(unsigned int address) { return m68k_read_memory_32(address); }
 
-void cpu_instruction_callback(unsigned int pc) {
-    unsigned int opcode = m68k_read_memory_16(pc);
-    
-    if ((opcode & 0xFFF0) == 0x4E40) {
-        unsigned int trap_vector = opcode & 0x000F;
-        unsigned int command_id = m68k_get_reg(NULL, M68K_REG_D0);
+void render_vram() {
+    SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
+    SDL_RenderClear(g_renderer);
 
-        if (trap_vector == 10) {
-            printf("Trap 10 caught\n");
-            //handle_trap_file_system(command_id);
+    // Lasketaan vilkuntavaihe SDL-millisekunneista (vaihtuu 500ms välein)
+    int show_cursor = (SDL_GetTicks() / 500) % 2;
+
+    for (int row = 0; row < GRID_ROWS; row++) {
+        for (int col = 0; col < GRID_COLS; col++) {
+            unsigned char ch = g_vram[row * GRID_COLS + col];
+            
+            // Jos ollaan kursorin kohdalla ja vilkuntavaihe on aktiivinen,
+            // korvataan taustamerkki CP437 täydellä laatikolla (219 = █)
+            if (row == g_cursor_y && col == g_cursor_x && show_cursor) {
+                ch = 219; 
+            }
+
+            for (int y = 0; y < CHAR_HEIGHT; y++) {
+                unsigned char byte = g_font_bitmap[ch][y];
+                for (int x = 0; x < CHAR_WIDTH; x++) {
+                    if (byte & (0x80 >> x)) {
+                        SDL_SetRenderDrawColor(g_renderer, 0, 255, 0, 255); 
+                        SDL_RenderDrawPoint(g_renderer, (col * CHAR_WIDTH) + x, (row * CHAR_HEIGHT) + y);
+                    }
+                }
+            }
         }
     }
-    if (opcode == 0x4E72) { // STOP-käsky
-        g_cpu_stopped = 1;
-        is_running = false;
-
-    }
-}
-
-// Alustusfunktio, jota kutsutaan ennen Musashin päälooppia
-void init_video() {
-    //vram_buffer = (unsigned char*)malloc(VRAM_SIZE);
-    //palette_buffer = (unsigned char*)malloc(PALETTE_SIZE);
-    //memset(vram_buffer, 0, VRAM_SIZE);
-    //memset(palette_buffer, 0, PALETTE_SIZE);
-
-    SDL_Init(SDL_INIT_VIDEO);
-    window = SDL_CreateWindow("M68k Emulator Framebuffer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, VRAM_X, VRAM_Y, 0);
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    
-    // Luodaan 8-bittinen indeksoitu tekstuuri
-    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBX8888, SDL_TEXTUREACCESS_STREAMING, VRAM_X, VRAM_Y);
-    
-    // Alustetaan SDL-paletti 256 värille
-    sdl_palette = SDL_AllocPalette(256);
-}
-
-void render_frame(void) {
-    // Luodaan staattinen puskuri, joka vastaa tismalleen 800x600 kokoisen ruudun 32-bit pikseleitä
-    static uint32_t raw_pixels[ VRAM_X *  VRAM_Y];
-
-    for (int i = 0; i <  VRAM_X *  VRAM_Y; i++) {
-        uint8_t index = system_ram[VRAM_START + i];
-        unsigned int base = PALETTE_START + (index * 4);
-        
-        // Luetaan värit emuloidusta 68k-muistista ($00RRGGBB)
-        uint8_t r = system_ram[base + 1];
-        uint8_t g = system_ram[base + 2];
-        uint8_t b = system_ram[base + 3];
-        
-        // Tehdään tavuosoitin yksittäiseen pikseliin. 
-        // Tämä takaa, että R, G ja B menevät muistiin tismalleen oikeassa järjestyksessä.
-        uint8_t* pixel_bytes = (uint8_t*)&raw_pixels[i];
-        
-        // RGBX-formaatissa tavujärjestys muistissa Little-Endian -koneella (Intel/AMD) on:
-        pixel_bytes[0] = b;     // Blue
-        pixel_bytes[1] = g;     // Green
-        pixel_bytes[2] = r;     // Red
-        pixel_bytes[3] = 0;     // X (Tyhjä / ohitetaan)
-    }
-
-    // Päivitetään tekstuuri ja piirretään
-    SDL_UpdateTexture(texture, NULL, raw_pixels, VRAM_X * sizeof(uint32_t));
-    
-    SDL_RenderClear(renderer);
-    SDL_RenderCopy(renderer, texture, NULL, NULL);
-    SDL_RenderPresent(renderer);
-
-    vram_dirty = false;
+    SDL_RenderPresent(g_renderer);
 }
 
 
-
-void m68kSendKeyState(int state) {
-    uart_in_data = (unsigned char)state; // Asetetaan merkki rekisteriin
-    m68k_set_irq(1);                    // Nostetaan IRQ 1 (Keyboard ISR käynnistyy)
+int load_raw_font(const char* filepath) {
+    FILE* file = fopen(filepath, "rb");
+    if (!file) return 0;
+    size_t read = fread(g_font_bitmap, 1, sizeof(g_font_bitmap), file);
+    fclose(file);
+    return read == sizeof(g_font_bitmap);
 }
 
-unsigned int m68kReadTerminal() {
-    unsigned int charValue = m68k_read_memory_8(UART_IN_ADDR);
-    return charValue;
+int load_rom_image(const char* filepath, unsigned int target_address) {
+    FILE* file = fopen(filepath, "rb");
+    if (!file) return 0;
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    size_t read = fread(&g_ram[target_address], 1, size, file);
+    fclose(file);
+    return (long)read == size;
 }
 
-
-int cpu_irq_ack_handler(int int_level) {
-    // Lasketaan keskeytyslinja alas (nollataan se), koska CPU huomioi jo pyynnön
-    m68k_set_irq(M68K_IRQ_NONE);
-
-    // Käytetään standardeja M68k-autovektoreita (kuten assembly-koodissa määritettiin)
-    return M68K_INT_ACK_AUTOVECTOR;
-}
-
-
-/* =============================================================================
- * PÄÄOHJELMA
- * =============================================================================
- */
 int main(int argc, char* argv[]) {
-    // Alustetaan muisti
-    system_ram = malloc(SYSTEM_MEM_SIZE);
-    if (!system_ram) {
-        fprintf(stderr, "Virhe: Muistin varaus epäonnistui.\n");
+    g_ram = (unsigned char*)calloc(RAM_SIZE, 1);
+    g_vram = (unsigned char*)calloc(VRAM_SIZE, 1);
+    memset(g_vram, ' ', VRAM_SIZE);
+
+    if (SDL_Init(SDL_INIT_VIDEO) < 0 || !g_ram || !g_vram) return -1;
+
+    g_window = SDL_CreateWindow("M68K Tiny BASIC Emulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN);
+    g_renderer = SDL_CreateRenderer(g_window, -1, SDL_RENDERER_ACCELERATED);
+
+    SDL_StartTextInput();
+
+    // KORJATTU OSOITE: ladataan rom.bin suoraan muistin alkuun (0x00000000)
+    if (!load_raw_font("font_8x16_raw.bin") || !load_rom_image("ROM/rom.bin", 0x00000000)) {
+        fprintf(stderr, "Tiedostojen lataus epäonnistui!\n");
         return -1;
     }
-    memset(system_ram, 0, SYSTEM_MEM_SIZE);
 
-    // SDL2 Alustus
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) {
-        fprintf(stderr, "SDL alustus epäonnistui: %s\n", SDL_GetError());
-        return -1;
-    }
-
-    init_video();
-
-    // Alustetaan Musashi CPU
     m68k_init();
-    m68k_set_cpu_type(SYSTEM_CPU_TYPE);
-    m68k_set_instr_hook_callback(cpu_instruction_callback);
+    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 
-    printf("Ladataan ROM-monitoria (rom.bin)... ");
-    FILE* rom_file = fopen("ROM/rom.bin", "rb");
-    if (!rom_file) {
-        fprintf(stderr, "\nVIRHE: rom.bin-tiedostoa ei voitu avata!\n");
-        return -1;
-    }
-    fread(system_ram, 1, SYSTEM_MEM_SIZE, rom_file);
-    fclose(rom_file);
-    printf("Onnistui!\n");
+    // KORJATTU VEKTORILUKU: Luetaan käynnistysvektorit sieltä minne ne kuuluu eli rom.bin:in alusta.
+    // Koska vasm luo Big-Endian-tavuja ja x86-koneesi on Little-Endian, poimitaan tavut oikeassa järjestyksessä:
+    unsigned int initial_sp = (g_ram[0] << 24) | (g_ram[1] << 16) | (g_ram[2] << 8) | g_ram[3];
+    unsigned int initial_pc = (g_ram[4] << 24) | (g_ram[5] << 16) | (g_ram[6] << 8) | g_ram[7];
 
-
-    printf("Ladataan Fontti-ROMia (font_8x8_raw.bin)... ");
-    FILE* font_file = fopen("ROM/font_8x8_raw.bin", "rb");
-    if (!font_file) {
-        fprintf(stderr, "\nVIRHE: font_8x8_raw.bin-tiedostoa ei löytynyt!\n");
-        fprintf(stderr, "Varmista, että tiedosto on emulaattorin suorituspolussa.\n");
-        return -1;
-    }
-
-    uint8_t* font_destination = &system_ram[FONT_ROM];
-
-    // Luetaan fonttitiedosto suoraan Fontti-ROM-alueelle
-    size_t font_bytes = fread(font_destination, 1, 2048, font_file); // 256 merkkiä * 8 tavua = 2048 tavua
-    fclose(font_file);
-    printf("Onnistui! (%zu tavua ladattu osoitteeseen $%08x.)\n", font_bytes,FONT_ROM);
-
-    m68k_set_int_ack_callback(cpu_irq_ack_handler);
-
+    // Syötetään poimitut ja korjatut Big-Endian-osoitteet suorittimelle
+    m68k_write_memory_32(0, initial_sp); 
+    m68k_write_memory_32(4, initial_pc);   
     m68k_pulse_reset();
 
-    printf("Emulaattori käynnistetty. Suoritetaan CPU-sykliä...\n");
 
-    // Päälooppi
+    int running = 1;
     SDL_Event event;
-    uint32_t last_tick = SDL_GetTicks();
 
-
-    while (is_running) {
-        // Käsitellään SDL-tapahtumat (Hiiri & Näppäimistö I/O)
+    while(running) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
-                is_running = false;
+                running = 0;
             }
-            if (event.type == SDL_KEYDOWN) {      
-                if (event.key.repeat == 0) {
-                    SDL_Keycode key = event.key.keysym.sym;
-                    m68kSendKeyState(key);
+            // UUSI: Hoitaa kaikki tavalliset merkit ja Shift-yhdistelmät (kuten Shift+2 = ")
+            else if (event.type == SDL_TEXTINPUT) {
+                // SDL_TEXTINPUT palauttaa UTF-8 merkkijonon, poimitaan ensimmäinen tavu (ASCII)
+                unsigned char ch = (unsigned char)event.text.text[0];
+                
+                // Varmistetaan, että merkki on emulaattorille sopiva tulostettava ASCII
+                if (ch >= 32 && ch <= 126) {
+                    g_keyboard_char = ch;
+                    g_keyboard_ready = 1;
+                }
+            }
+            // MUUTETTU: Hoitaa vain ohjausnäppäimet, joita tekstinsyöttö ei poimi
+            else if (event.type == SDL_KEYDOWN) {
+                SDL_Keycode key = event.key.keysym.sym;
+                
+                if (key == SDLK_RETURN) {
+                    g_keyboard_char = 13; // Carriage Return Tiny BASICille
+                    g_keyboard_ready = 1;
+                } else if (key == SDLK_BACKSPACE) {
+                    g_keyboard_char = 8;  // Backspace
+                    g_keyboard_ready = 1;
                 }
             }
         }
 
-        // Suoritetaan Musashi-CPU:ta pätkissä.
-        m68k_execute(4096);
-        current_pc = m68k_get_reg(NULL, M68K_REG_PC);
-
-        render_frame(); // Tämä piirtää VAIN jos vram_dirty == true      
-
-        SDL_Delay(5); 
+    m68k_execute(50000);
+    render_vram();
+    SDL_Delay(16); 
     }
 
-    dump_cpu_status();
-
-    dump_vram_start(1024);
-
-    // Siivous
-    SDL_DestroyTexture(texture);
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
-    
-    free(system_ram);
+    if (g_hdd_file) fclose(g_hdd_file);
+    SDL_DestroyRenderer(g_renderer); SDL_DestroyWindow(g_window); SDL_Quit();
+    free(g_ram); free(g_vram);
     return 0;
 }
