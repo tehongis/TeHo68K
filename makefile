@@ -1,68 +1,66 @@
-# ============================================================================
-# 68000 Virtual Computer - Makefile (ROM Boot Only - External Shared Core)
-# ============================================================================
+CC      = gcc
+CFLAGS  = -Wall -Wextra -O2 $(shell sdl2-config --cflags)
+LIBS    = $(shell sdl2-config --libs) -lm
 
-# --- Tools ---
-CC          = gcc
-VASM        = vasmm68k_mot
+# Polku Musashi-kansioon (isolla M-kirjaimella)
+MUSASHI_DIR = ../Musashi
+CFLAGS += -I$(MUSASHI_DIR)
 
-# CFLAGS: Hakupolut osoittavat nyt projektin ulkopuolelle ../rocket68 kansioon
-CFLAGS      = -Wall -Wextra -O2 -std=c11 -Iinclude -I../rocket68/include -I../rocket68/src
-LDFLAGS     = -lSDL2 -lm
-LDLIBS      = ../rocket68/lib/librocket68.a
+SRC_DIR     = src
+ASM_DIR     = asm
+ROM_DIR     = ROM
+HDD_DIR     = HDD
 
-# --- Directories (Korjattu SRC_DIR vastaamaan projektisi srcs/ kansiota) ---
-SRC_DIR     = srcs
-ROM_DIR     = rom
-OBJ_DIR     = build
-TARGET      = m68k_vm
+# KORJATTU: Poistettu ylimääräinen $ merkki kommentin edestä
+SRC = $(SRC_DIR)/main_emulator.c #(SRC_DIR)/memory_bus.c
 
-# --- Sources ---
-SRCS        = $(SRC_DIR)/main.c \
-              $(SRC_DIR)/vm.c \
-              $(SRC_DIR)/display.c
-OBJS        = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SRCS))
+# LISÄTTY: m68kdasm.c mukaan disassembleria varten
+MUSASHI_SRC = $(MUSASHI_DIR)/m68kcpu.c \
+              $(MUSASHI_DIR)/m68kops.c \
+              $(MUSASHI_DIR)/m68kdasm.c \
+              $(MUSASHI_DIR)/softfloat/softfloat.c
 
-# --- ROM Files ---
-KERNEL_BIN  = $(ROM_DIR)/kernel.bin
+OBJ = $(SRC:.c=.o) $(MUSASHI_SRC:.c=.o)
 
-# ============================================================================
-# Targets
-# ============================================================================
+TARGET = emulator
 
-.PHONY: all rom clean run help
+ASM = vasmm68k_mot
+ASM_FLAGS = -Fbin
 
-# Poistettu kokonaan vanha install-rocket68 riippuvuus
-all: rom $(TARGET)
-	@echo "=== Build complete: ./$(TARGET) ==="
+# UUSI: Lisätty 'run' PHONY-listalle
+.PHONY: default all clean directories musashi_gen run
 
-# --- ROM: Unified Kernel Bootstrap ---
-rom: $(KERNEL_BIN)
+# UUSI: Asetetaan oletusmaaliksi 'run', joka ajaa emulaattorin käännöksen jälkeen
+default: run
 
-$(KERNEL_BIN): $(ROM_DIR)/kernel.asm
-	@mkdir -p $(ROM_DIR)
-	$(VASM) -spaces -Fbin -o $@ $<
-	@echo "  [ROM] $@ ($(shell stat -c%s $@ 2>/dev/null || wc -c < $@) bytes)"
+all: directories $(ROM_DIR)/rom.bin $(TARGET)
+	@if [ ! -f $(ROM_DIR)/font_8x8_raw.bin ]; then \
+		echo "HUOMAUTUS: Muista sijoittaa font_8x8_raw.bin kansioon $(ROM_DIR)/ ennen ajoa!"; \
+	fi
 
-# --- Emulator Binary ---
-$(TARGET): $(OBJS) $(LDLIBS)
-	@mkdir -p $(OBJ_DIR)
-	$(CC) $(OBJS) $(LDLIBS) $(LDFLAGS) -o $@
-	@echo "  [BIN] $@"
-
-# --- Object Files ---
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR):
-	mkdir -p $(OBJ_DIR)
-
-# --- Run ---
+# UUSI: 'make run' kääntää tarvittaessa kaiken ja käynnistää binäärin
 run: all
 	./$(TARGET)
 
-# --- Clean ---
+$(TARGET): $(OBJ)
+	$(CC) $(OBJ) -o $(TARGET) $(LIBS)
+
+$(ROM_DIR)/rom.bin: $(ASM_DIR)/rom_monitor.asm $(ASM_DIR)/HAL.i
+	$(ASM) $(ASM_FLAGS) -I$(ASM_DIR) -L rom.lst -o $(ROM_DIR)/rom.bin $(ASM_DIR)/rom_monitor.asm
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+directories:
+	@mkdir -p $(SRC_DIR)
+	@mkdir -p $(ASM_DIR)
+	@mkdir -p $(ROM_DIR)
+	@mkdir -p $(HDD_DIR)
+
+musashi_gen:
+	cd $(MUSASHI_DIR) && ./m68kmake
+
 clean:
-	rm -rf $(OBJ_DIR) $(TARGET)
-	rm -f $(ROM_DIR)/*.bin
-	@echo "  Cleaned build artifacts"
+	rm -f $(SRC_DIR)/*.o $(TARGET) $(ROM_DIR)/rom.bin
+	rm -f $(MUSASHI_DIR)/*.o
+	rm -f $(MUSASHI_DIR)/softfloat/*.o

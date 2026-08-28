@@ -1,0 +1,140 @@
+# Clone Rocket 68
+git clone https://github.com/habedi/rocket68
+
+# Assemble autoboot ROM
+vasmm68k_mot -Fbin rom/autoboot.asm -o rom/autoboot.bin
+
+# Create HDD and boot sector
+mkdir HDD
+vasmm68k_mot -Fbin rom/shell.asm -o HDD/sector_0000.bin
+
+# Build and run
+make
+make run   
+
+
+
+
+
+----
+
+
+# Assemble the HAL ROM
+vasm68k_mot -Fbin rom/system.asm -o rom/system.bin
+
+# Build the emulator
+make
+
+# Run
+./m68k_vm   
+
+-- last update
+# Assemble system.rom
+vasm68k_mot -Fbin rom/system.asm -o HDD/sector_0000.bin   
+
+
+# 1. Assemble minimal bootstrap → ROM
+vasm68k_mot -Fbin rom/autoboot.asm -o rom/autoboot.bin
+
+# 2. Assemble HAL system.rom → HDD
+vasm68k_mot -Fbin rom/system.asm -o HDD/sector_0000.bin
+
+# 3. Build emulator
+make
+
+# 4. Run
+./m68k_vm   
+---------------
+
+
+
+# First time (clones rocket68, assembles ROMs, builds emulator)
+make
+
+# Rebuild after editing C sources
+make
+
+# Rebuild after editing system.asm (HAL changes)
+make hdd && make run
+
+# Rebuild after editing autoboot.asm
+make rom && make run
+
+# Quick run
+make run
+
+# Full clean
+make deep-clean   
+
+
+
+
+
+
+
+
+
+
+HowToUse
+
+; --- Example: Load BASIC.EXE ---
+LOAD_BASIC_EXE:
+    ; 1. Set Filename in Buffer
+    LEA     BASIC_NAME, A0
+    MOVEQ   #0, D0
+    MOVE.B  (A0)+, D0
+    MOVE.B  D0, FS_NAME_LEN
+    LEA     FS_NAME_BASE, A1
+    MOVE.L  A0, A2 ; Actually, we need to copy the string.
+    ; Simple copy loop:
+    LEA     BASIC_NAME, A0
+    LEA     FS_NAME_BASE, A1
+    MOVEQ   #0, D3
+FS_COPY_NAME:
+    MOVE.B  (A0)+, (A1)+
+    CMP.B   (A0), #'0' ; Check end of string (null terminator)
+    ; Better: use a null terminator check
+    ; Let's assume BASIC_NAME is null-terminated
+    ; Actually, let's just use a fixed length or a loop
+    ; For simplicity, let's assume BASIC_NAME is "BASIC.EXE\0"
+    ; And we just copy it.
+    ; ... (copy loop omitted for brevity) ...
+    
+    ; 2. Set Load Address
+    MOVE.L  #$00100000, D0 ; Low
+    MOVE.L  #$00000000, D1 ; Mid
+    MOVE.L  #$00000000, D2 ; High
+    
+    ; 3. Call TRAP
+    MOVE.L  #HAL_FS_LOAD_FILE, D0
+    TRAP    #10
+    
+    ; 4. Check Status
+    CMP.B   #0, D0
+    BEQ     LOAD_OK
+    ; Error handling
+    BRA     ERROR_HANDLER
+
+LOAD_OK:
+    ; Jump to loaded code
+    JMP     $00100000
+
+; --- Example: List Directory ---
+LIST_DIR:
+    MOVE.L  #HAL_FS_LIST_DIR, D0
+    TRAP    #10
+    RTS
+
+; --- Example: Save Memory to File ---
+SAVE_KERNEL:
+    ; Save kernel (from $00E00000, size 2MB)
+    LEA     BASIC_NAME, A0
+    ; Copy filename to buffer...
+    
+    MOVE.L  #0, D0 ; Low Address
+    MOVE.L  #$00E0, D1 ; Mid
+    MOVE.L  #0, D2 ; High
+    MOVE.L  #2*1024*1024, D3 ; Size
+    MOVE.L  #HAL_FS_SAVE_FILE, D0
+    TRAP    #10
+    RTS

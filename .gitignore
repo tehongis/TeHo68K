@@ -1,4 +1,4 @@
-rom/autoboot.bin
-/rocket68
+ROM/*.bin
 *.o
 *.bin
+m68k_vm
