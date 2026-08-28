@@ -1,0 +1,274 @@
+Sections:
+00: "org0001:0" (0-8)
+01: "org0002:1000" (1000-121C)
+
+
+Source: "asm/boot_rom.asm"
+                            	     1: ; =============================================================================
+                            	     2: ; M68K COLD START ROM MONITOR & CP/M BOOTLOADER
+                            	     3: ; =============================================================================
+                            	     4: 
+                            	     5:     org     $00000000           ; ROM alkaa absoluuttisesta nollasta
+                            	     6: 
+00:00000000 00100000        	     7:     dc.l    $00100000           ; Osoite 0: Initial SP (1MB RAM loppu)
+00:00000004 00001000        	     8:     dc.l    cold_start          ; Osoite 4: Initial PC (Hyppy käynnistykseen)
+                            	     9: 
+                            	    10: ; =============================================================================
+                            	    11: ; Laitteistomääritykset (MMIO Rekisterit C-emulaattorilta)
+                            	    12: ; =============================================================================
+                            	    13: IO_STATUS     equ     $00F00000   
+                            	    14: IO_DATA       equ     $00F00004   
+                            	    15: HDD_COMMAND   equ     $00F00100   
+                            	    16: HDD_STATUS    equ     $00F00101   
+                            	    17: HDD_SECTOR    equ     $00F00102   
+                            	    18: HDD_DMA_ADDR  equ     $00F00108   
+                            	    19: 
+                            	    20: ; CP/M 68K Moduulien kohdeosoitteet RAM-muistissa
+                            	    21: CCP_ADDR      equ     $0000C000   
+                            	    22: BDOS_ADDR     equ     $0000E000   
+                            	    23: BIOS_ADDR     equ     $0000FA00   
+                            	    24: 
+                            	    25: ; =============================================================================
+                            	    26: ; Cold Boot -Käynnistyspiste
+                            	    27: ; =============================================================================
+                            	    28:     org     $00001000           ; Pakotetaan monitorikoodi osoitteeseen $1000
+                            	    29: cold_start:
+                            	    30:     ; 1. Tulostetaan käynnistysilmoitus ruudulle
+01:00001000 41F810EC        	    31:     lea     INIT_MSG,a0
+01:00001004 610000C4        	    32:     bsr     print_string
+                            	    33: 
+                            	    34:     ; 2. Avataan virtuaalinen kiintolevy (HDD_COMMAND = 1)
+01:00001008 13FC000100F00100	    35:     move.b  #1,HDD_COMMAND
+01:00001010 4A3900F00101    	    36:     tst.b   HDD_STATUS
+01:00001016 6652            	    37:     bne     .hdd_error          ; Jos status ei ole 0, levyä ei löydy
+                            	    38: 
+                            	    39:     ; 3. Ladataan komentotulkki CCP (Sektorit 0-2 -> osoitteeseen $C000)
+01:00001018 41F8113A        	    40:     lea     LOAD_CCP_MSG,a0
+01:0000101C 610000AC        	    41:     bsr     print_string
+01:00001020 7000            	    42:     move.l  #0,d0               ; Aloitetaan sektorista 0
+01:00001022 41F90000C000    	    43:     lea     CCP_ADDR,a0         ; Kohde RAMissa
+01:00001028 7203            	    44:     move.l  #3,d1               ; Luetaan 3 sektoria (1536 tavua)
+01:0000102A 6154            	    45:     bsr     read_multiple_sectors
+01:0000102C 4A00            	    46:     tst.b   d0
+01:0000102E 6642            	    47:     bne     .read_error
+                            	    48: 
+                            	    49:     ; 4. Ladataan ydin BDOS (Sektorit 3-6 -> osoitteeseen $E000)
+01:00001030 41F8114A        	    50:     lea     LOAD_BDOS_MSG,a0
+01:00001034 61000094        	    51:     bsr     print_string
+01:00001038 7003            	    52:     move.l  #3,d0               ; Aloitetaan sektorista 3
+01:0000103A 41F90000E000    	    53:     lea     BDOS_ADDR,a0        ; Kohde RAMissa
+01:00001040 7204            	    54:     move.l  #4,d1               ; Luetaan 4 sektoria (2048 tavua)
+01:00001042 613C            	    55:     bsr     read_multiple_sectors
+01:00001044 4A00            	    56:     tst.b   d0
+01:00001046 662A            	    57:     bne     .read_error
+                            	    58: 
+                            	    59:     ; 5. Ladataan ajurit BIOS (Sektorit 7-9 -> osoitteeseen $FA00)
+01:00001048 41F81160        	    60:     lea     LOAD_BIOS_MSG,a0
+01:0000104C 617C            	    61:     bsr     print_string
+01:0000104E 7007            	    62:     move.l  #7,d0               ; Aloitetaan sektorista 7
+01:00001050 41F90000FA00    	    63:     lea     BIOS_ADDR,a0        ; Kohde RAMissa
+01:00001056 7203            	    64:     move.l  #3,d1               ; Luetaan 3 sektoria (1536 tavua)
+01:00001058 6126            	    65:     bsr     read_multiple_sectors
+01:0000105A 4A00            	    66:     tst.b   d0
+01:0000105C 6614            	    67:     bne     .read_error
+                            	    68: 
+                            	    69:     ; 6. Ketjutus (Bootstrapping): Hyppy suoraan CP/M BIOS-alustukseen!
+01:0000105E 41F81176        	    70:     lea     JUMP_MSG,a0
+01:00001062 6166            	    71:     bsr     print_string
+                            	    72:     
+01:00001064 4EF90000FA00    	    73:     jmp     BIOS_ADDR           ; Luovutetaan kontrolli CP/M:lle
+                            	    74: 
+                            	    75: ; --- Virheenkäsittely ---
+                            	    76: .hdd_error:
+01:0000106A 41F811A6        	    77:     lea     ERR_NO_HDD,a0
+01:0000106E 615A            	    78:     bsr     print_string
+01:00001070 6006            	    79:     bra     .halt
+                            	    80: 
+                            	    81: .read_error:
+01:00001072 41F811D7        	    82:     lea     ERR_READ_FAIL,a0
+01:00001076 6152            	    83:     bsr     print_string
+                            	    84:     bra     .halt
+                            	    85: 
+                            	    86: .halt:
+01:00001078 41F81200        	    87:     lea     HALT_MSG,a0
+01:0000107C 614C            	    88:     bsr     print_string
+                            	    89: .loop:
+01:0000107E 60FE            	    90:     bra     .loop               ; Jäädään ikuiseen silmukkaan jos käynnistys epäonnistui
+                            	    91: 
+                            	    92: ; =============================================================================
+                            	    93: ; Kiintolevyn matalan tason I/O-alirutiinit
+                            	    94: ; =============================================================================
+                            	    95: read_multiple_sectors:
+                            	    96: .sector_loop:
+01:00001080 23C000F00102    	    97:     move.l  d0,HDD_SECTOR      ; Kerrotaan ohjaimelle sektori
+01:00001086 23C800F00108    	    98:     move.l  a0,HDD_DMA_ADDR    ; Kerrotaan DMA-osoite RAM-muistissa
+01:0000108C 13FC000200F00100	    99:     move.b  #2,HDD_COMMAND     ; Komento 2: LUE
+                            	   100:     
+01:00001094 4A3900F00101    	   101:     tst.b   HDD_STATUS         ; Tarkistetaan onnistuiko luku (0 = OK)
+01:0000109A 660E            	   102:     bne     .done_read_err
+                            	   103:     
+01:0000109C 5280            	   104:     addq.l  #1,d0              ; Seuraava sektori
+01:0000109E 41E80200        	   105:     lea     512(a0),a0         ; Siirretään RAM-osoitetta 512 tavua eteenpäin
+01:000010A2 5381            	   106:     subq.l  #1,d1              ; Vähennetään luettavien määrää
+01:000010A4 66DA            	   107:     bne     .sector_loop
+01:000010A6 7000            	   108:     move.l  #0,d0              ; Palautetaan 0 merkiksi siitä että kaikki OK
+01:000010A8 4E75            	   109:     rts
+                            	   110: .done_read_err:
+01:000010AA 7001            	   111:     move.l  #1,d0              ; Palautetaan 1 virheen merkiksi
+01:000010AC 4E75            	   112:     rts
+                            	   113: 
+                            	   114: HDD_READ_SECTOR:
+01:000010AE 23C000F00102    	   115:     move.l  d0,HDD_SECTOR      
+01:000010B4 23C800F00108    	   116:     move.l  a0,HDD_DMA_ADDR    
+01:000010BA 13FC000200F00100	   117:     move.b  #2,HDD_COMMAND     
+01:000010C2 103900F00101    	   118:     move.b  HDD_STATUS,d0      
+01:000010C8 4E75            	   119:     rts
+                            	   120: 
+                            	   121: print_string:
+01:000010CA 1018            	   122:     move.b  (a0)+,d0
+01:000010CC 6704            	   123:     beq     .done
+01:000010CE 6104            	   124:     bsr     OUTCH
+01:000010D0 60F8            	   125:     bra     print_string
+                            	   126: .done:
+01:000010D2 4E75            	   127:     rts
+                            	   128: 
+                            	   129: OUTCH:
+01:000010D4 1F01            	   130:     move.b  d1,-(sp)
+                            	   131: .wait_tx:
+01:000010D6 123900F00000    	   132:     move.b  IO_STATUS,d1       
+01:000010DC 02010002        	   133:     andi.b  #$02,d1            
+01:000010E0 67F4            	   134:     beq     .wait_tx            
+01:000010E2 13C000F00004    	   135:     move.b  d0,IO_DATA         
+01:000010E8 121F            	   136:     move.b  (sp)+,d1
+01:000010EA 4E75            	   137:     rts
+                            	   138: 
+                            	   139: ; =============================================================================
+                            	   140: ; Merkkijonot (Puhtaana ASCII-datana)
+                            	   141: ; =============================================================================
+                            	   142: INIT_MSG:
+01:000010EC 0D              	   143:     dc.b    13,10,"--- TEHO68K COLD START MONITOR v2.5 ---",13,10
+01:000010ED 0A
+01:000010EE 2D2D2D205445484F
+01:000010F6 36384B20434F4C44
+01:000010FE 205354415254204D
+01:00001106 4F4E49544F522076
+01:0000110E 322E35202D2D2D
+01:00001115 0D
+01:00001116 0A
+01:00001117 414C555354455441	   144:     dc.b    "ALUSTETAAN LAITTEISTO... VALMIS.",13,10,0
+01:0000111F 414E204C41495454
+01:00001127 454953544F2E2E2E
+01:0000112F 2056414C4D49532E
+01:00001137 0D
+01:00001138 0A
+01:00001139 00
+                            	   145: LOAD_CCP_MSG:
+01:0000113A 4C55455441414E20	   146:     dc.b    "LUETAAN CCP... ",0
+01:00001142 4343502E2E2E20
+01:00001149 00
+                            	   147: LOAD_BDOS_MSG:
+01:0000114A 4F4B2E          	   148:     dc.b    "OK.",13,10,"LUETAAN BDOS... ",0
+01:0000114D 0D
+01:0000114E 0A
+01:0000114F 4C55455441414E20
+01:00001157 42444F532E2E2E20
+01:0000115F 00
+                            	   149: LOAD_BIOS_MSG:
+01:00001160 4F4B2E          	   150:     dc.b    "OK.",13,10,"LUETAAN BIOS... ",0
+01:00001163 0D
+01:00001164 0A
+01:00001165 4C55455441414E20
+01:0000116D 42494F532E2E2E20
+01:00001175 00
+                            	   151: JUMP_MSG:
+01:00001176 4F4B2E          	   152:     dc.b    "OK.",13,10,"SIIRRYTAAN CP/M KAYTTOJARJESTELMAAN...",13,10,13,10,0
+01:00001179 0D
+01:0000117A 0A
+01:0000117B 5349495252595441
+01:00001183 414E2043502F4D20
+01:0000118B 4B415954544F4A41
+01:00001193 524A455354454C4D
+01:0000119B 41414E2E2E2E
+01:000011A1 0D
+01:000011A2 0A
+01:000011A3 0D
+01:000011A4 0A
+01:000011A5 00
+                            	   153: ERR_NO_HDD:
+01:000011A6 56495248453A2056	   154:     dc.b    "VIRHE: VIRTUAALILEVYA EI LOYDY KANSIOSTA HDD/!",13,10,0
+01:000011AE 4952545541414C49
+01:000011B6 4C45565941204549
+01:000011BE 204C4F594459204B
+01:000011C6 414E53494F535441
+01:000011CE 204844442F21
+01:000011D4 0D
+01:000011D5 0A
+01:000011D6 00
+                            	   155: ERR_READ_FAIL:
+01:000011D7 56495248453A2053	   156:     dc.b    "VIRHE: SEKTORIN LUKEMINEN EPAONNISTUI!",13,10,0
+01:000011DF 454B544F52494E20
+01:000011E7 4C554B454D494E45
+01:000011EF 4E204550414F4E4E
+01:000011F7 495354554921
+01:000011FD 0D
+01:000011FE 0A
+01:000011FF 00
+                            	   157: HALT_MSG:
+01:00001200 4A41524A45535445	   158:     dc.b    "JARJESTELMA PYSAYTETTY.",13,10,0
+01:00001208 4C4D412050595341
+01:00001210 5954455454592E
+01:00001217 0D
+01:00001218 0A
+01:00001219 00
+                            	   159: 
+                            	   160:     align   2
+                            	   161: 
+
+
+Symbols by name:
+BDOS_ADDR                        E:0000E000
+BIOS_ADDR                        E:0000FA00
+CCP_ADDR                         E:0000C000
+ERR_NO_HDD                       A:000011A6
+ERR_READ_FAIL                    A:000011D7
+HALT_MSG                         A:00001200
+HDD_COMMAND                      E:00F00100
+HDD_DMA_ADDR                     E:00F00108
+HDD_READ_SECTOR                  A:000010AE
+HDD_SECTOR                       E:00F00102
+HDD_STATUS                       E:00F00101
+INIT_MSG                         A:000010EC
+IO_DATA                          E:00F00004
+IO_STATUS                        E:00F00000
+JUMP_MSG                         A:00001176
+LOAD_BDOS_MSG                    A:0000114A
+LOAD_BIOS_MSG                    A:00001160
+LOAD_CCP_MSG                     A:0000113A
+OUTCH                            A:000010D4
+cold_start                       A:00001000
+print_string                     A:000010CA
+read_multiple_sectors            A:00001080
+
+Symbols by value:
+00001000 cold_start
+00001080 read_multiple_sectors
+000010AE HDD_READ_SECTOR
+000010CA print_string
+000010D4 OUTCH
+000010EC INIT_MSG
+0000113A LOAD_CCP_MSG
+0000114A LOAD_BDOS_MSG
+00001160 LOAD_BIOS_MSG
+00001176 JUMP_MSG
+000011A6 ERR_NO_HDD
+000011D7 ERR_READ_FAIL
+00001200 HALT_MSG
+0000C000 CCP_ADDR
+0000E000 BDOS_ADDR
+0000FA00 BIOS_ADDR
+00F00000 IO_STATUS
+00F00004 IO_DATA
+00F00100 HDD_COMMAND
+00F00101 HDD_STATUS
+00F00102 HDD_SECTOR
+00F00108 HDD_DMA_ADDR

@@ -1,21 +1,28 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include "m68k.h"
 
 // Hardware-konfiguraatio
 #define RAM_SIZE       (1024 * 1024)           // 1 MB RAM
 #define GRID_COLS      80
-#define GRID_ROWS      40
+#define GRID_ROWS      25
 #define VRAM_SIZE      (GRID_COLS * GRID_ROWS) // 3200 tavua tekstipuskuria
 #define SECTOR_SIZE    512                     // 512 tavun kiintolevysektori
 
 // Fontin ja ikkunan mitat
 #define CHAR_WIDTH     8
 #define CHAR_HEIGHT    16
-#define WINDOW_WIDTH   (GRID_COLS * CHAR_WIDTH)   // 640 px
-#define WINDOW_HEIGHT  (GRID_ROWS * CHAR_HEIGHT)  // 640 px
+// Emulaattorin sisäinen "looginen" koko (720 x 480)
+#define VIRTUAL_WIDTH   (GRID_COLS * CHAR_WIDTH)
+#define VIRTUAL_HEIGHT  (GRID_ROWS * CHAR_HEIGHT)
+
+// Fyysisen ikkunan koko työpöydällä (1440 x 960) -> TUPLATTU KOOSSA
+#define WINDOW_WIDTH    (VIRTUAL_WIDTH * 2)
+#define WINDOW_HEIGHT   (VIRTUAL_HEIGHT * 2)
+
 
 // Muistikartan osoitteet (KORJATTU: Ei duplikaatteja tai VSTART-virheitä)
 #define RAM_START      0x00000000
@@ -33,8 +40,10 @@
 
 #define IO_TIMER       0x00F00200  // UUSI: 32-bittinen millisekuntiajastin
 
+#define fontname        "Fonts/Bm437_ATI_8x16_8x16_raw.bin"
 
-// Globaalit muistipuskurit
+// Tämä on emulaattorin oma "näytönohjaimen muisti"
+uint32_t g_pixel_vram[WINDOW_WIDTH * WINDOW_HEIGHT];
 unsigned char* g_ram = NULL;
 unsigned char* g_vram = NULL;
 
@@ -53,9 +62,13 @@ unsigned char g_hdd_status = 0;
 unsigned int  g_hdd_sector = 0;
 unsigned int  g_hdd_dma_addr = 0;
 
+
 // SDL-rajapinnan muuttujat
 SDL_Window* g_window = NULL;
 SDL_Renderer* g_renderer = NULL;
+SDL_Texture* g_vram_texture = NULL; 
+SDL_Texture* g_crt_texture = NULL;  
+SDL_Texture* g_font_texture = NULL; // VGA-tekstitilaa varten
 
 
 // --------------- IO_DATA
@@ -96,26 +109,25 @@ void handle_terminal_write(unsigned char ch) {
     }
 }
 
-// Käsittelee HDD_COMMAND-rekisteriin tehdyt kirjoitukset isäntäkoneen puolella
 void handle_hdd_command(unsigned char cmd) {
     if (cmd == 1) { // AVAA LEVY
         if (!g_hdd_file) {
+            // Yritetään vain avata olemassa oleva tiedosto luku- ja kirjoitustilassa
             g_hdd_file = fopen("HDD/virtual_disk.img", "r+b");
-            if (!g_hdd_file) {
-                // Jos image puuttuu, luodaan automaattisesti tyhjä 1MB testi-image
-                g_hdd_file = fopen("HDD/virtual_disk.img", "w+b");
-                if (g_hdd_file) {
-                    unsigned char* dummy = calloc(1024 * 1024, 1);
-                    fwrite(dummy, 1, 1024 * 1024, g_hdd_file);
-                    free(dummy);
-                    fseek(g_hdd_file, 0, SEEK_SET);
-                }
-            }
         }
+        
+        // Jos tiedostoa ei ole, g_hdd_file on NULL ja tilaksi tulee 0xFF (virhe)
         g_hdd_status = (g_hdd_file) ? 0 : 0xFF;
+        
+        if (g_hdd_status == 0xFF) {
+            printf("HDD: Open failed! File 'HDD/virtual_disk.img' not found.\n");
+        } else {
+            printf("HDD: Open status:%d\n", g_hdd_status);
+        }
         return;
     }
 
+    // Jos levyä ei ole avattu onnistuneesti, kaikki muut komennot palauttavat suoraan virheen
     if (!g_hdd_file) {
         g_hdd_status = 0xFF; // Ei avattua levykuvaa käytettävissä
         return;
@@ -123,12 +135,16 @@ void handle_hdd_command(unsigned char cmd) {
 
     // Lasketaan 512 tavun lohkon siirtymä tiedostossa
     long offset = (long)g_hdd_sector * SECTOR_SIZE;
-    fseek(g_hdd_file, offset, SEEK_SET);
+    if (fseek(g_hdd_file, offset, SEEK_SET) != 0) {
+        g_hdd_status = 0xFF;
+        return;
+    }
 
     if (cmd == 2) { // LUE SEKTORI (Siirto levyltä RAMiin DMA-osoitteeseen)
         if (g_hdd_dma_addr + SECTOR_SIZE <= RAM_SIZE) {
             size_t read = fread(&g_ram[g_hdd_dma_addr], 1, SECTOR_SIZE, g_hdd_file);
             g_hdd_status = (read == SECTOR_SIZE) ? 0 : 0xFF;
+            printf("HDD: Read dma addr: %u status:%d\n", g_hdd_dma_addr, g_hdd_status);
         } else {
             g_hdd_status = 0xFF; // Muistin ylitysvirhe
         }
@@ -138,14 +154,16 @@ void handle_hdd_command(unsigned char cmd) {
             size_t written = fwrite(&g_ram[g_hdd_dma_addr], 1, SECTOR_SIZE, g_hdd_file);
             fflush(g_hdd_file);
             g_hdd_status = (written == SECTOR_SIZE) ? 0 : 0xFF;
+            printf("HDD: Write dma addr: %u status:%d\n", g_hdd_dma_addr, g_hdd_status);
         } else {
-            g_hdd_status = 0xFF;
+            g_hdd_status = 0xFF; // Muistin ylitysvirhe
         }
     }
     else if (cmd == 4) { // SULJE LEVY
         fclose(g_hdd_file);
         g_hdd_file = NULL;
         g_hdd_status = 0;
+        printf("HDD: Close status:%d\n", g_hdd_status);
     }
 }
 
@@ -193,7 +211,10 @@ void m68k_write_memory_8(unsigned int address, unsigned int value) {
     if (address <= RAM_END) { g_ram[address] = (unsigned char)value; return; }
     if (address >= VRAM_START && address <= VRAM_END) { g_vram[address - VRAM_START] = (unsigned char)value; return; }
     
-    if (address == IO_DATA) handle_terminal_write((unsigned char)value);
+    if (address == IO_DATA) {
+        //printf("[DEBUG CONOUT] Char: %d (%c)\n", value, (value >= 32 && value <= 126) ? value : '.');
+        handle_terminal_write((unsigned char)value);
+    }
     else if (address == HDD_COMMAND) handle_hdd_command((unsigned char)value);
 }
 
@@ -220,36 +241,96 @@ void m68k_write_memory_32(unsigned int address, unsigned int value) {
 unsigned int m68k_read_disassembler_16(unsigned int address) { return m68k_read_memory_16(address); }
 unsigned int m68k_read_disassembler_32(unsigned int address) { return m68k_read_memory_32(address); }
 
-void render_vram() {
-    SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
-    SDL_RenderClear(g_renderer);
+int init_font_texture() {
+    // Luodaan pintamuisti (Surface), johon fontti puretaan pikseleinä käynnistyksessä
+    // Järjestetään 256 merkkiä 16 sarakkeeseen ja 16 riviin.
+    int surf_w = 16 * CHAR_WIDTH;  // 16 * 8 = 128 pikseliä laajaksi
+    int surf_h = 16 * CHAR_HEIGHT; // 16 * 16 = 256 pikseliä korkeaksi
+    
+    SDL_Surface* surf = SDL_CreateSurface(surf_w, surf_h, SDL_PIXELFORMAT_RGBA8888);
+    if (!surf) return 0;
 
-    // Lasketaan vilkuntavaihe SDL-millisekunneista (vaihtuu 500ms välein)
-    int show_cursor = (SDL_GetTicks() / 500) % 2;
+    // Täytetään pinta aluksi täysin läpinäkyvällä mustalla
+    SDL_FillSurfaceRect(surf, NULL, SDL_MapRGBA(SDL_GetPixelFormatDetails(surf->format), NULL, 0, 0, 0, 0));
+    uint32_t* pixels = (uint32_t*)surf->pixels;
 
-    for (int row = 0; row < GRID_ROWS; row++) {
-        for (int col = 0; col < GRID_COLS; col++) {
-            unsigned char ch = g_vram[row * GRID_COLS + col];
+    for (int ch = 0; ch < 256; ch++) {
+        // Lasketaan missä kohdassa isoa 16x16-ruudukkoa tämä merkki sijaitsee
+        int font_grid_x = (ch % 16) * CHAR_WIDTH;
+        int font_grid_y = (ch / 16) * CHAR_HEIGHT;
+
+        // Käydään läpi tarkalleen KAIKKI 16 pikseliriviä alusta loppuun
+        for (int y = 0; y < CHAR_HEIGHT; y++) {
+            unsigned char byte = g_font_bitmap[ch][y];
             
-            // Jos ollaan kursorin kohdalla ja vilkuntavaihe on aktiivinen,
-            // korvataan taustamerkki CP437 täydellä laatikolla (219 = █)
-            if (row == g_cursor_y && col == g_cursor_x && show_cursor) {
-                ch = 219; 
-            }
-
-            for (int y = 0; y < CHAR_HEIGHT; y++) {
-                unsigned char byte = g_font_bitmap[ch][y];
-                for (int x = 0; x < CHAR_WIDTH; x++) {
-                    if (byte & (0x80 >> x)) {
-                        SDL_SetRenderDrawColor(g_renderer, 0, 255, 0, 255); 
-                        SDL_RenderDrawPoint(g_renderer, (col * CHAR_WIDTH) + x, (row * CHAR_HEIGHT) + y);
-                    }
+            // Käydään läpi merkin 8 vaakapikseliä (bittiä)
+            for (int x = 0; x < CHAR_WIDTH; x++) {
+                int px = font_grid_x + x;
+                int py = font_grid_y + y;
+                
+                if (byte & (0x80 >> x)) {
+                    // Merkitään fontin bitti puhtaaksi valkoiseksi (SDL värjää sen lennosta vihreäksi)
+                    pixels[py * surf_w + px] = 0xFFFFFFFF; 
+                } else {
+                    // Tausta jätetään kokonaan läpinäkyväksi
+                    pixels[py * surf_w + px] = 0x00000000;
                 }
             }
         }
     }
+
+    // Tehdään valmiista pinnasta näytönohjaimen tekstuuri ja vapautetaan CPU-muisti
+    g_font_texture = SDL_CreateTextureFromSurface(g_renderer, surf);
+    SDL_DestroySurface(surf);
+    
+    return g_font_texture != NULL;
+}
+
+
+
+void render_vram() {
+    // 1. Tyhjennetään päänäyttö (ikkuna) suoraan mustaksi
+    SDL_SetRenderTarget(g_renderer, NULL);
+    SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
+    SDL_RenderClear(g_renderer);
+
+    int show_cursor = (SDL_GetTicks() / 500) % 2;
+
+    // 2. Piirretään VGA-tekstiruudukko SUORAAN ikkunaan näytönohjaimen rautakiihdytyksellä
+    for (int row = 0; row < GRID_ROWS; row++) {
+        for (int col = 0; col < GRID_COLS; col++) {
+            unsigned char ch = g_vram[row * GRID_COLS + col];
+            
+            if (row == g_cursor_y && col == g_cursor_x && show_cursor) {
+                ch = 219; // Kursori (█)
+            }
+
+            // Lasketaan mistä kohtaa isoa fonttitekstuuria tämä merkki löytyy
+            SDL_FRect src_rect;
+            src_rect.x = (float)((ch % 16) * CHAR_WIDTH);
+            src_rect.y = (float)((ch / 16) * CHAR_HEIGHT);
+            src_rect.w = (float)CHAR_WIDTH;
+            src_rect.h = (float)CHAR_HEIGHT;
+
+            // Lasketaan mihin kohtaan emulaattorin ikkunaa merkki asetetaan
+            SDL_FRect dst_rect;
+            dst_rect.x = (float)(col * CHAR_WIDTH);
+            dst_rect.y = (float)(row * CHAR_HEIGHT);
+            dst_rect.w = (float)CHAR_WIDTH;
+            dst_rect.h = (float)CHAR_HEIGHT;
+
+            // Asetetaan perinteinen ja kirkas retro-vihreä väri tekstille
+            SDL_SetTextureColorMod(g_font_texture, 34, 255, 34);
+
+            // Piirretään merkki ruudulle
+            SDL_RenderTexture(g_renderer, g_font_texture, &src_rect, &dst_rect);
+        }
+    }
+
+    // 3. Heitetään kuva suoraan näkyviin ilman mitään maskeja
     SDL_RenderPresent(g_renderer);
 }
+
 
 
 int load_raw_font(const char* filepath) {
@@ -271,78 +352,140 @@ int load_rom_image(const char* filepath, unsigned int target_address) {
     return (long)read == size;
 }
 
+
+void print_cpu_debug_dump(void) {
+    printf("\n=================== TEHO68K CPU DEBUG DUMP ===================\n");
+    
+    // Luetaan rekisterit Musashin API:sta
+    unsigned int pc = m68k_get_reg(NULL, M68K_REG_PC);
+    unsigned int sp = m68k_get_reg(NULL, M68K_REG_SP);
+    unsigned int sr = m68k_get_reg(NULL, M68K_REG_SR);
+    
+    // Tulostetaan tärkeimmät tilarekisterit ja osoittimet
+    printf("PC (Program Counter) : 0x%08X\n", pc);
+    printf("SP (Stack Pointer)   : 0x%08X\n", sp);
+    printf("SR (Status Register) : 0x%04X\n\n", sr);
+    
+    // Tulostetaan Datarekisterit (D0-D7)
+    printf("Datarekisterit:\n");
+    for(int i = 0; i < 8; i++) {
+        printf("  D%d: 0x%08X", i, m68k_get_reg(NULL, M68K_REG_D0 + i));
+        if (i == 3 || i == 7) printf("\n");
+    }
+    
+    // Tulostetaan Osoiterekisterit (A0-A7)
+    printf("Osoiterekisterit:\n");
+    for(int i = 0; i < 8; i++) {
+        printf("  A%d: 0x%08X", i, m68k_get_reg(NULL, M68K_REG_A0 + i));
+        if (i == 3 || i == 7) printf("\n");
+    }
+    
+    // Viimeisimmän suoritetun käskyn (Disassembly) selvittäminen PC-osoitteesta
+    printf("\nViimeisin suoritettu käsky (PC:n kohdalla):\n");
+    char disasm_buffer[100];
+    // Musashin sisäinen disassembler purkaa käskyn tekstiksi muistista
+    m68k_disassemble(disasm_buffer, pc, M68K_CPU_TYPE_68000);
+    printf("  --> 0x%08X: %s\n", pc, disasm_buffer);
+    
+    printf("==============================================================\n\n");
+}
+
+
 int main(int argc, char* argv[]) {
+    (void)argc; (void)argv;
+
     g_ram = (unsigned char*)calloc(RAM_SIZE, 1);
     g_vram = (unsigned char*)calloc(VRAM_SIZE, 1);
+    if (!g_ram || !g_vram) return -1;
     memset(g_vram, ' ', VRAM_SIZE);
 
-    if (SDL_Init(SDL_INIT_VIDEO) < 0 || !g_ram || !g_vram) return -1;
+    // Alustetaan SDL3 videojärjestelmä
+    if (!SDL_Init(SDL_INIT_VIDEO)) return -1;
 
-    g_window = SDL_CreateWindow("M68K Tiny BASIC Emulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN);
-    g_renderer = SDL_CreateRenderer(g_window, -1, SDL_RENDERER_ACCELERATED);
+    // Luodaan ikkuna ja renderöijä
+    g_window = SDL_CreateWindow("Tiny M68K VGA Text Emulator", WINDOW_WIDTH, WINDOW_HEIGHT, 0);
+    g_renderer = SDL_CreateRenderer(g_window, NULL);
+    if (!g_window || !g_renderer) return -1;
 
-    SDL_StartTextInput();
+    // 1. Asetetaan looginen resoluutio (Skaalataan emulaattorin oma kuva isompaan ikkunaan)
+    SDL_SetRenderLogicalPresentation(g_renderer, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, SDL_LOGICAL_PRESENTATION_LETTERBOX);
 
-    // KORJATTU OSOITE: ladataan rom.bin suoraan muistin alkuun (0x00000000)
-    if (!load_raw_font("font_8x16_raw.bin") || !load_rom_image("ROM/rom.bin", 0x00000000)) {
-        fprintf(stderr, "Tiedostojen lataus epäonnistui!\n");
+    // 2. KORJATTU JA VIRALLINEN SDL3 RIVI: 
+    // Lukitaan tekstuurin skaalaus retrohenkisen teräväksi (Nearest Neighbor)
+    if (g_font_texture) {
+        SDL_SetTextureScaleMode(g_font_texture, SDL_SCALEMODE_NEAREST);
+    }
+
+    // Ladataan IBM VGA-raakafontti ja rakennetaan siitä GPU-tekstuuri
+    if (!load_raw_font(fontname) || !init_font_texture()) {
+        fprintf(stderr, "Fontin lataus epäonnistui.\n");
         return -1;
     }
+    printf("Fontin lataus onnistui.\n");
+
+    // Ladataan 68000-ohjelmakoodi ROM-alueelle
+    if (!load_rom_image("ROM/boot_rom.bin", 0x00000000)) {
+        fprintf(stderr, "ROM-lataus epäonnistui!\n");
+        return -1;
+    }
+
+    SDL_StartTextInput(g_window);
 
     m68k_init();
     m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 
-    // KORJATTU VEKTORILUKU: Luetaan käynnistysvektorit sieltä minne ne kuuluu eli rom.bin:in alusta.
-    // Koska vasm luo Big-Endian-tavuja ja x86-koneesi on Little-Endian, poimitaan tavut oikeassa järjestyksessä:
+    // Haetaan käynnistysvektorit
     unsigned int initial_sp = (g_ram[0] << 24) | (g_ram[1] << 16) | (g_ram[2] << 8) | g_ram[3];
     unsigned int initial_pc = (g_ram[4] << 24) | (g_ram[5] << 16) | (g_ram[6] << 8) | g_ram[7];
 
-    // Syötetään poimitut ja korjatut Big-Endian-osoitteet suorittimelle
     m68k_write_memory_32(0, initial_sp); 
     m68k_write_memory_32(4, initial_pc);   
     m68k_pulse_reset();
 
-
     int running = 1;
     SDL_Event event;
 
+
+
     while(running) {
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) {
+            if (event.type == SDL_EVENT_QUIT) {            
                 running = 0;
             }
-            // UUSI: Hoitaa kaikki tavalliset merkit ja Shift-yhdistelmät (kuten Shift+2 = ")
-            else if (event.type == SDL_TEXTINPUT) {
-                // SDL_TEXTINPUT palauttaa UTF-8 merkkijonon, poimitaan ensimmäinen tavu (ASCII)
+            else if (event.type == SDL_EVENT_TEXT_INPUT) {
                 unsigned char ch = (unsigned char)event.text.text[0];
-                
-                // Varmistetaan, että merkki on emulaattorille sopiva tulostettava ASCII
                 if (ch >= 32 && ch <= 126) {
                     g_keyboard_char = ch;
                     g_keyboard_ready = 1;
                 }
             }
-            // MUUTETTU: Hoitaa vain ohjausnäppäimet, joita tekstinsyöttö ei poimi
-            else if (event.type == SDL_KEYDOWN) {
-                SDL_Keycode key = event.key.keysym.sym;
-                
+            else if (event.type == SDL_EVENT_KEY_DOWN) {
+                SDL_Keycode key = event.key.key;
                 if (key == SDLK_RETURN) {
-                    g_keyboard_char = 13; // Carriage Return Tiny BASICille
+                    g_keyboard_char = 13;
                     g_keyboard_ready = 1;
                 } else if (key == SDLK_BACKSPACE) {
-                    g_keyboard_char = 8;  // Backspace
+                    g_keyboard_char = 8;
                     g_keyboard_ready = 1;
                 }
             }
         }
 
-    m68k_execute(50000);
-    render_vram();
-    SDL_Delay(16); 
+        m68k_execute(4096);
+
+        
+        render_vram();
+        SDL_Delay(16); 
     }
 
+    print_cpu_debug_dump();
+
+
     if (g_hdd_file) fclose(g_hdd_file);
-    SDL_DestroyRenderer(g_renderer); SDL_DestroyWindow(g_window); SDL_Quit();
+    if (g_font_texture) SDL_DestroyTexture(g_font_texture);
+    SDL_DestroyRenderer(g_renderer);
+    SDL_DestroyWindow(g_window);
+    SDL_Quit();
     free(g_ram); free(g_vram);
     return 0;
 }

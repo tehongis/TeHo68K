@@ -77,6 +77,7 @@ GET_TICKS:
 ; =============================================================================
 ; Päätefunktiot
 ; =============================================================================
+
 OUTCH:
     move.b  d1,-(sp)
 .wait_tx:
@@ -105,6 +106,33 @@ TSTAT:
     rts
 
 ; =============================================================================
+; TINY BASICIN VAATIMAT APUOHJELMAT (Sillattu C-emulaattorille)
+; =============================================================================
+    xdef    AUXOUT
+AUXOUT:
+    move.b  d1,-(sp)
+.wait:
+    move.b  IO_STATUS,d1       ; Luetaan emulaattorin tilarekisteri
+    andi.b  #$02,d1            ; Onko lähetin valmis (Tx)?
+    beq     .wait
+    move.b  d0,IO_DATA         ; Kirjoitetaan merkki näytölle
+    move.b  (sp)+,d1
+    rts
+
+    xdef    AUXIN
+AUXIN:
+    move.b  IO_STATUS,d0       ; Luetaan emulaattorin tilarekisteri
+    andi.b  #$01,d0            ; Onko näppäimistöltä merkkiä (Rx)?
+    beq     .no_char           ; Jos ei, hypätään palauttamaan Zero status
+    move.b  IO_DATA,d0         ; Luetaan raaka merkki
+    andi.b  #$7F,d0            ; Nollataan ylin bitti (puhtaan ASCII:n varmistus)
+    tst.b   d0                 ; Nollataan Zero-lippu, koska merkki löytyi (Z=0)
+    rts
+.no_char:
+    move.w  #4,ccr             ; Asetetaan aito CPU Zero status -lippu (Z=1) kokonaisena
+    rts
+
+; =============================================================================
 ; Data-alue
 ; =============================================================================
 WELCOME_MSG:
@@ -119,4 +147,5 @@ HDD_ERR_MSG:
 ; =============================================================================
 ; SISÄLLYTETÄÄN TINY BASIC
 ; =============================================================================
+START_BASIC:
     include "tinybasic.asm"
